@@ -1,0 +1,40 @@
+name: Generate Track
+
+# Run this manually from the "Actions" tab on GitHub - no Codespace needed.
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed number (same seed = same track, change it for a new layout)"
+        required: false
+        default: "7"
+      pieces:
+        description: "Target number of pieces (bigger = longer track)"
+        required: false
+        default: "30"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run the track generator
+        run: node track_generator.js --seed ${{ github.event.inputs.seed }} --pieces ${{ github.event.inputs.pieces }} --out track.json
+
+      - name: Commit the generated track.json back to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add track.json
+          git diff --staged --quiet || git commit -m "Generate track (seed ${{ github.event.inputs.seed }}, pieces ${{ github.event.inputs.pieces }})"
+          git push
