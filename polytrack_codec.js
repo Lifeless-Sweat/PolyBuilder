@@ -71,6 +71,7 @@ function writeU16(arr, v) { arr.push(v & 0xFF, (v>>>8)&0xFF); }
 
 const CP_IDS = [52, 65, 75, 77];
 const START_IDS = [5, 91, 92, 93];
+const FINISH_ID = 6; // confirmed via real exported test track
 const DIR_NAMES = ['YPos', 'YNeg', 'XPos', 'XNeg', 'ZPos', 'ZNeg'];
 const ENV_NAMES = ['Summer', 'Winter', 'Desert'];
 
@@ -210,7 +211,7 @@ function encodeTrackCodeV6({ name, author, lastModified, trackData }) {
 module.exports = {
   customEncode, customDecode, zlibDecompress, zlibCompress,
   decodeTrackCodeV6, decodeTrackDataV6, encodeTrackDataV6, encodeTrackCodeV6,
-  CP_IDS, START_IDS, DIR_NAMES, ENV_NAMES,
+  CP_IDS, START_IDS, FINISH_ID, DIR_NAMES, ENV_NAMES,
 };
 
 if (require.main === module) {
