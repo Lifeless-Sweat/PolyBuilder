@@ -9,7 +9,7 @@ PolyBuilder is an automated track generator for the low-poly racing game **PolyT
 * **GitHub Actions Integrated:** Run generation workflows completely in the cloud without local environment setups.
 * **Custom Track Length:** Configure specific lengths between **10 and 150 track segments** to control map scale and complexity.
 * **Environment Themes:** Supports layout generation optimized for **Summer**, **Winter**, or **Desert** biomes.
-* **Seed-Based Generation:** Input specific seeds for deterministic, reproducible designs, or randomize them to discover new layouts.
+* **Seed-Based Generation (W.I.P. / Optional):** Input specific seeds for deterministic, reproducible designs, or randomize them to discover new layouts.
 * **Instant Visual Previews:** Generates an ASCII text map preview alongside the raw track code to visualize the layout before importing.
 
 ---
@@ -24,7 +24,7 @@ PolyBuilder is an automated track generator for the low-poly racing game **PolyT
 4. Configure the generation parameters:
    * **Track Parts:** Provide a number from `10` to `150`.
    * **Environment Theme:** Choose `Summer`, `Winter`, or `Desert`.
-   * **Seed:** Enter an alphanumeric value for a predictable layout, or leave it variable.
+   * **Seed (Optional - W.I.P.):** Enter an alphanumeric value for a predictable layout, or leave it variable.
 5. Click the green **Run workflow** button to start the process.
 
 ### Retrieving the Output
