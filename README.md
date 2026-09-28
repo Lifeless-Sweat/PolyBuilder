@@ -1,10 +1,10 @@
-# PolyBuilder 🏗️ 🤖
+# PolyBuilder
 
 **PolyBuilder** is an automated track generator for the low-poly racing game **PolyTrack**. Powered by GitHub Actions, it generates random, procedurally stable, or AI-optimized custom track import codes and visual layout previews directly from your GitHub repository using manual workflow dispatch.
 
 ---
 
-## ✨ Features
+## Features
 
 * **GitHub Actions Native:** No local environment or code execution required. Run it entirely from the cloud.
 * **Granular Length Scale:** Choose exactly between **10 to 150 track segments** to control the map's scale and complexity.
@@ -14,7 +14,7 @@
 
 ---
 
-## 🚀 How to Use It
+## How to Use It
 
 Because this project utilizes GitHub Actions workflows, you do not need to install local programming dependencies unless modifying the core generation script.
 
@@ -35,12 +35,12 @@ Once the execution completes (usually takes less than a minute):
 1. Click on the finished workflow run.
 2. Open the job details or check the **Workflow Summary** screen.
 3. You will find:
-   * 🗺️ **Visual Layout:** A text graphic showing the flow and turns of the generated track.
-   * 📋 **Track Code:** A raw string of data optimized for the PolyTrack engine. Copy this entirely.
+   *  **Visual Layout:** A text graphic showing the flow and turns of the generated track.
+   *  **Track Code:** A raw string of data optimized for the PolyTrack engine. Copy this entirely.
 
 ---
 
-## 🏎️ How to Import into PolyTrack
+##  How to Import into PolyTrack
 
 Once you have your generated track string from the GitHub Action output:
 
@@ -52,7 +52,7 @@ Once you have your generated track string from the GitHub Action output:
 
 ---
 
-## 🛠️ Local Development (Optional)
+##  Local Development (Optional)
 
 If you wish to test or tweak the track generation logic on your local machine:
 
