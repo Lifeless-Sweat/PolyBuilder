@@ -7,9 +7,9 @@
 ## Features
 
 * **GitHub Actions Native:** No local environment or code execution required. Run it entirely from the cloud.
-* **Granular Length Scale:** Choose exactly between **10 to 150 track segments** to control the map's scale and complexity.
-* **Environment Scenery Support:** Generate layouts tailored specifically to **Summer**, **Winter**, or **Desert** themes.
-* **Deterministic Seeds:** Use specific seeds to recreate exact layouts or perfect a specific procedural design.
+* **Track length:** Choose exactly between **10 to 150 track segments** to control the map's scale and complexity.
+* **Environment Support:** Generate layouts tailored specifically to **Summer**, **Winter**, or **Desert** themes.
+* ** Seeds:** Use specific seeds to recreate exact layouts or perfect a specific procedural design: This is optimal
 * **Instant Visual Layout:** Generates a text-based ASCII map layout preview alongside the raw track code.
 
 ---
