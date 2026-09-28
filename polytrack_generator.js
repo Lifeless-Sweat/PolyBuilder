@@ -1,22 +1,27 @@
 'use strict';
 /**
- * PolyTrack random track generator
+ * PolyTrack random track generator  (v2 - big curves)
  * ---------------------------------------------------------------
  * Builds a random point-to-point track: START -> road -> CHECKPOINTS -> FINISH
  * and prints a PolyTrack import code you can paste into the game.
  *
  * Usage:
  *   node polytrack_generator.js
- *   node polytrack_generator.js --seed 42 --pieces 60 --turn 0.4
+ *   node polytrack_generator.js --seed 42 --pieces 30 --turn 0.4
  *   node polytrack_generator.js --env Winter --out track_code.txt --preview track_preview.txt
  *
  * Confirmed piece IDs (decoded from real exported tracks):
  *   0 = straight, 5 = start, 6 = finish, 36 = curve, 75 = checkpoint
  *
- * How curves work (confirmed from real snapped-together pieces):
- *   A curve is a quarter arc joining TWO adjacent sides of its cell. Rotation picks which:
- *     rot 0: south+east   rot 1: east+north   rot 2: north+west   rot 3: west+south
- *   (north = -z, east = +x). The same piece makes left AND right turns.
+ * GEOMETRY (all confirmed from real exported tracks):
+ *   - The grid step is 4 units. Straight / start / finish / checkpoint fill ONE cell.
+ *   - A CURVE is a big piece: it fills a 2x2 block of cells and its arc has radius 6.
+ *     Its block coordinate is the cell that holds its "near" face. The far face sits
+ *     one cell forward and one cell sideways, so the next piece goes 1 cell forward
+ *     and 2 cells sideways from where the curve started.
+ *   - Rotation picks which two sides a curve opens on:
+ *       rot 0: south + east   rot 1: east + north   rot 2: north + west   rot 3: west + south
+ *     Entering through the near face is a RIGHT turn, through the far face a LEFT turn.
  */
 
 const fs = require('fs');
@@ -24,31 +29,33 @@ const {
   encodeTrackDataV6, encodeTrackCodeV6, decodeTrackCodeV6, decodeTrackDataV6,
 } = require('./polytrack_codec.js');
 
-const STEP = 4; // grid spacing between pieces
+const CELL = 4;
 const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 
-// directions as [dx, dz]
+// directions as [dx, dz]  (north = -z, east = +x)
 const N = [0, -1], E = [1, 0], S = [0, 1], W = [-1, 0];
+const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const scale = (a, k) => [a[0] * k, a[1] * k];
 const neg = (d) => [-d[0], -d[1]];
 const eq = (a, b) => a[0] === b[0] && a[1] === b[1];
 const key = (d) => `${d[0]},${d[1]}`;
 const turnRight = (h) => [-h[1], h[0]];
 const turnLeft = (h) => [h[1], -h[0]];
+// rotate a vector by r quarter turns (the same rotation the curve piece uses)
+function rot(v, r) { let [x, z] = v; for (let i = 0; i < r; i++) [x, z] = [z, -x]; return [x, z]; }
 
 // rotation for direction-aware pieces (start / finish / checkpoint), by travel heading
 const HEAD_ROT = new Map([[key(N), 0], [key(W), 1], [key(S), 2], [key(E), 3]]);
-// the two open sides of a curve, per rotation
-const CURVE_FACES = [[S, E], [E, N], [N, W], [W, S]];
 
-function curveRotation(hIn, hOut) {
-  const entry = neg(hIn); // side we come in through
-  for (let r = 0; r < 4; r++) {
-    const f = CURVE_FACES[r];
-    const has = (d) => eq(f[0], d) || eq(f[1], d);
-    if (has(entry) && has(hOut)) return r;
-  }
-  throw new Error('no curve rotation for that turn');
-}
+// curve at rotation 0, in cells relative to its block coordinate
+const CURVE_CELLS = [[0, 0], [1, 0], [0, -1], [1, -1]]; // the 2x2 block
+const CURVE_FAR = [1, -1];                              // cell holding the far face
+// road path through the block (for the preview): cell + the two sides the road opens on
+const CURVE_ROAD = [
+  { c: [0, 0], f: [S, N] },
+  { c: [0, -1], f: [S, E] },
+  { c: [1, -1], f: [W, E] },
+];
 
 // ---------------------------------------------------------------- RNG + args
 function mulberry32(seed) {
@@ -62,8 +69,8 @@ function mulberry32(seed) {
 
 function parseArgs(argv) {
   const a = {
-    seed: Math.floor(Math.random() * 1e9), pieces: 40, turn: 0.35,
-    cpEvery: 8, env: 'Summer', name: 'AI Track', out: null, preview: null,
+    seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -77,116 +84,154 @@ function parseArgs(argv) {
     else if (k === '--preview') { a.preview = v; i++; }
   }
   if (!Number.isFinite(a.seed)) a.seed = Math.floor(Math.random() * 1e9);
-  if (!Number.isFinite(a.pieces) || a.pieces < 6) a.pieces = 6;
+  if (!Number.isFinite(a.pieces) || a.pieces < 4) a.pieces = 4;
+  if (!Number.isFinite(a.turn)) a.turn = 0.3;
   if (!['Summer', 'Winter', 'Desert'].includes(a.env)) a.env = 'Summer';
   return a;
 }
 
-// ---------------------------------------------------------------- path
-/**
- * Random self-avoiding walk. A new cell may not touch (side by side) any earlier
- * cell except the one we came from, so roads never run flush against each other.
- */
-function generatePath(rng, n, turnProb) {
-  for (let attempt = 0; attempt < 20000; attempt++) {
-    const cells = [[0, 0]];
-    const heads = [N]; // heads[i] = direction of travel leaving cell i
-    const occ = new Set(['0,0']);
-    const free = (p, from) => {
-      if (occ.has(key(p))) return false;
-      for (const d of [N, E, S, W]) {
-        const q = [p[0] + d[0], p[1] + d[1]];
-        if (!eq(q, from) && occ.has(key(q))) return false;
+// ---------------------------------------------------------------- pieces
+/** Work out a curve for a turn: which rotation, where its block sits, where we are afterwards. */
+function planTurn(front, hIn, side) {
+  const hOut = side === 'R' ? turnRight(hIn) : turnLeft(hIn);
+  for (let r = 0; r < 4; r++) {
+    const nearFace = rot(S, r), farFace = rot(E, r);
+    let origin = null;
+    if (side === 'R' && eq(nearFace, neg(hIn)) && eq(farFace, hOut)) origin = front;      // enter by the near face
+    if (side === 'L' && eq(farFace, neg(hIn)) && eq(nearFace, hOut)) origin = add(front, neg(rot(CURVE_FAR, r))); // enter by the far face
+    if (origin) {
+      const cells = CURVE_CELLS.map((c) => add(origin, rot(c, r)));
+      const nextFront = add(add(front, hIn), scale(hOut, 2));
+      return { kind: 'curve', id: ID.CURVE, rotation: r, origin, cells, nextFront, hOut, entryFace: side === 'R' ? 'A' : 'B' };
+    }
+  }
+  throw new Error('no curve rotation found');
+}
+
+function planStraight(front, hIn) {
+  return { kind: 'straight', id: ID.STRAIGHT, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front], nextFront: add(front, hIn), hOut: hIn, hIn };
+}
+
+// ---------------------------------------------------------------- path search
+function generate(rng, n, turnProb) {
+  for (let attempt = 0; attempt < 30000; attempt++) {
+    const pieces = [];
+    const owner = new Map(); // cell -> piece index
+    // a candidate is fine if it overlaps nothing and does not sit side by side with any
+    // piece other than the one it connects to
+    const fits = (cells, prevIdx) => {
+      const mine = new Set(cells.map(key));
+      for (const c of cells) {
+        if (owner.has(key(c))) return false;
+        for (const d of [N, E, S, W]) {
+          const q = add(c, d);
+          if (mine.has(key(q))) continue;
+          const o = owner.get(key(q));
+          if (o !== undefined && o !== prevIdx) return false;
+        }
       }
       return true;
     };
-    const first = [0, -1];
-    cells.push(first); occ.add(key(first));
-    let ok = true;
+    const place = (p) => { const idx = pieces.length; pieces.push(p); for (const c of p.cells) owner.set(key(c), idx); return idx; };
+
+    // start piece at the origin, facing north
+    place({ kind: 'start', id: ID.START, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1] });
+    let front = [0, -1], h = N, ok = true;
+
     for (let i = 1; i < n - 1 && ok; i++) {
-      const cur = cells[i];
-      const prevH = heads[i - 1];
-      const turns = rng() < 0.5 ? [turnLeft(prevH), turnRight(prevH)] : [turnRight(prevH), turnLeft(prevH)];
-      const order = rng() < turnProb ? [...turns, prevH] : [prevH, ...turns];
+      const prevIdx = pieces.length - 1;
+      const turns = rng() < 0.5 ? ['L', 'R'] : ['R', 'L'];
+      const order = rng() < turnProb ? [...turns, 'S'] : ['S', ...turns];
       let chosen = null;
-      for (const h of order) {
-        const p = [cur[0] + h[0], cur[1] + h[1]];
-        if (free(p, cur)) { chosen = h; break; }
+      for (const o of order) {
+        const p = o === 'S' ? planStraight(front, h) : planTurn(front, h, o);
+        if (o !== 'S') p.hIn = h;
+        if (fits(p.cells, prevIdx)) { chosen = p; break; }
       }
       if (!chosen) { ok = false; break; }
-      heads[i] = chosen;
-      const p = [cur[0] + chosen[0], cur[1] + chosen[1]];
-      cells.push(p); occ.add(key(p));
+      place(chosen);
+      front = chosen.nextFront; h = chosen.hOut;
     }
-    if (ok && cells.length === n) return { cells, heads };
+    if (!ok) continue;
+
+    // finish piece
+    const fin = { kind: 'finish', id: ID.FINISH, rotation: HEAD_ROT.get(key(h)), origin: front, cells: [front], hIn: h, hOut: h, nextFront: add(front, h) };
+    if (!fits(fin.cells, pieces.length - 1)) continue;
+    place(fin);
+    return pieces;
   }
-  throw new Error('could not build a path - try fewer pieces or a lower --turn value');
+  throw new Error('could not build a track - try fewer pieces or a lower --turn value');
 }
 
-// ---------------------------------------------------------------- pieces
-function buildPieces(cells, heads, cpEvery) {
-  const n = cells.length;
-  const pieces = [];
-  let since = 0, cpCount = 0;
-  for (let i = 0; i < n; i++) {
-    const [gx, gz] = cells[i];
-    if (i === 0) {
-      pieces.push({ gx, gz, id: ID.START, rotation: HEAD_ROT.get(key(heads[0])), kind: 'start' });
-    } else if (i === n - 1) {
-      pieces.push({ gx, gz, id: ID.FINISH, rotation: HEAD_ROT.get(key(heads[n - 2])), kind: 'finish' });
-    } else {
-      const hIn = heads[i - 1], hOut = heads[i];
-      since++;
-      if (eq(hIn, hOut)) {
-        if (since >= cpEvery && i <= n - 3) {
-          pieces.push({ gx, gz, id: ID.CHECKPOINT, rotation: HEAD_ROT.get(key(hIn)), kind: 'checkpoint', cpOrder: cpCount++ });
-          since = 0;
-        } else {
-          pieces.push({ gx, gz, id: ID.STRAIGHT, rotation: hIn[1] !== 0 ? 0 : 1, kind: 'straight' });
-        }
-      } else {
-        pieces.push({ gx, gz, id: ID.CURVE, rotation: curveRotation(hIn, hOut), kind: 'curve' });
-      }
+/** Turn some straights into checkpoints. */
+function addCheckpoints(pieces, cpEvery) {
+  let since = 0, count = 0;
+  for (let i = 1; i < pieces.length - 2; i++) {
+    since++;
+    const p = pieces[i];
+    if (p.kind === 'straight' && since >= cpEvery) {
+      p.kind = 'checkpoint'; p.id = ID.CHECKPOINT; p.rotation = HEAD_ROT.get(key(p.hIn)); p.cpOrder = count++;
+      since = 0;
     }
   }
-  return pieces;
 }
 
-// the sides each piece is open on
-function facesOf(p) {
-  if (p.kind === 'curve') return CURVE_FACES[p.rotation];
-  return p.rotation % 2 === 0 ? [N, S] : [E, W];
+// ---------------------------------------------------------------- self-check
+/**
+ * Independent geometry check in real world units: the exit port of every piece must land
+ * exactly on the entry port of the next one, pointing at it, and no two pieces may share a cell.
+ */
+function ports(p) {
+  const c = scale(p.origin, CELL);
+  if (p.kind !== 'curve') {
+    const h = p.hIn || p.hOut;
+    return { entry: { at: add(c, scale(h, -2)), out: neg(h) }, exit: { at: add(c, scale(h, 2)), out: h } };
+  }
+  const A = { at: add(c, rot([0, 2], p.rotation)), out: rot(S, p.rotation) };
+  const B = { at: add(c, rot([6, -4], p.rotation)), out: rot(E, p.rotation) };
+  return p.entryFace === 'A' ? { entry: A, exit: B } : { entry: B, exit: A };
 }
 
-/** Self-check: every neighbouring pair of pieces must be open towards each other. */
-function verifyConnected(pieces, heads) {
+function verify(pieces) {
+  const seen = new Set();
+  for (const p of pieces) for (const c of p.cells) { if (seen.has(key(c))) throw new Error('overlap'); seen.add(key(c)); }
   for (let i = 0; i < pieces.length - 1; i++) {
-    const a = pieces[i], b = pieces[i + 1], h = heads[i];
-    const fa = facesOf(a), fb = facesOf(b);
-    const aOpen = eq(fa[0], h) || eq(fa[1], h);
-    const bOpen = eq(fb[0], neg(h)) || eq(fb[1], neg(h));
-    if (!aOpen || !bOpen) throw new Error(`pieces ${i} and ${i + 1} do not connect`);
+    const a = ports(pieces[i]).exit, b = ports(pieces[i + 1]).entry;
+    if (!eq(a.at, b.at) || !eq(a.out, neg(b.out))) throw new Error(`pieces ${i} and ${i + 1} do not connect`);
   }
 }
 
 // ---------------------------------------------------------------- preview
+function faceChar(f) {
+  const has = (d) => f.some((x) => eq(x, d));
+  if (has(N) && has(S)) return '│';
+  if (has(E) && has(W)) return '─';
+  if (has(S) && has(E)) return '┌';
+  if (has(S) && has(W)) return '┐';
+  if (has(N) && has(E)) return '└';
+  return '┘';
+}
+
 function preview(pieces) {
-  const xs = pieces.map((p) => p.gx), zs = pieces.map((p) => p.gz);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
-  const at = new Map(pieces.map((p) => [`${p.gx},${p.gz}`, p]));
-  const curveChar = ['┌', '└', '┘', '┐'];
+  const at = new Map();
+  for (const p of pieces) {
+    if (p.kind === 'curve') {
+      for (const seg of CURVE_ROAD) {
+        const c = add(p.origin, rot(seg.c, p.rotation));
+        at.set(key(c), faceChar(seg.f.map((d) => rot(d, p.rotation))));
+      }
+    } else {
+      const ch = p.kind === 'start' ? 'S' : p.kind === 'finish' ? 'F' : p.kind === 'checkpoint' ? 'C' : (p.rotation === 0 ? '│' : '─');
+      at.set(key(p.origin), ch);
+    }
+  }
+  const cells = [...at.keys()].map((k) => k.split(',').map(Number));
+  const minX = Math.min(...cells.map((c) => c[0])), maxX = Math.max(...cells.map((c) => c[0]));
+  const minZ = Math.min(...cells.map((c) => c[1])), maxZ = Math.max(...cells.map((c) => c[1]));
   const rows = [];
   for (let z = minZ; z <= maxZ; z++) {
     let row = '';
-    for (let x = minX; x <= maxX; x++) {
-      const p = at.get(`${x},${z}`);
-      if (!p) row += ' ';
-      else if (p.kind === 'start') row += 'S';
-      else if (p.kind === 'finish') row += 'F';
-      else if (p.kind === 'checkpoint') row += 'C';
-      else if (p.kind === 'curve') row += curveChar[p.rotation];
-      else row += p.rotation === 0 ? '│' : '─';
-    }
+    for (let x = minX; x <= maxX; x++) row += at.get(`${x},${z}`) || ' ';
     rows.push(row);
   }
   return rows.join('\n');
@@ -194,12 +239,12 @@ function preview(pieces) {
 
 // ---------------------------------------------------------------- encode
 function toTrackCode(pieces, args) {
-  const minGX = Math.min(...pieces.map((p) => p.gx));
-  const minGZ = Math.min(...pieces.map((p) => p.gz));
+  const minX = Math.min(...pieces.map((p) => p.origin[0]));
+  const minZ = Math.min(...pieces.map((p) => p.origin[1]));
   const groups = new Map();
   let maxCoord = 0;
   for (const p of pieces) {
-    const x = (p.gx - minGX) * STEP, z = (p.gz - minGZ) * STEP;
+    const x = (p.origin[0] - minX) * CELL, z = (p.origin[1] - minZ) * CELL;
     maxCoord = Math.max(maxCoord, x, z);
     const block = { x, y: 0, z, rotation: p.rotation, dir: 'YPos', color: 0 };
     if (p.kind === 'start') block.startOrder = 0;
@@ -220,21 +265,19 @@ function toTrackCode(pieces, args) {
 function main() {
   const args = parseArgs(process.argv);
   const rng = mulberry32(args.seed);
-  const { cells, heads } = generatePath(rng, args.pieces, args.turn);
-  const pieces = buildPieces(cells, heads, args.cpEvery);
-  verifyConnected(pieces, heads);
+  const pieces = generate(rng, args.pieces, args.turn);
+  addCheckpoints(pieces, args.cpEvery);
+  verify(pieces);
 
   const code = toTrackCode(pieces, args);
-
-  // round-trip check: decode what we just made and count the blocks
   const back = decodeTrackDataV6(decodeTrackCodeV6(code).trackData);
-  const total = back.parts.reduce((s, p) => s + p.amount, 0);
-  if (total !== pieces.length) throw new Error('round-trip mismatch');
+  if (back.parts.reduce((s, p) => s + p.amount, 0) !== pieces.length) throw new Error('round-trip mismatch');
 
   const map = preview(pieces);
   const cps = pieces.filter((p) => p.kind === 'checkpoint').length;
+  const curves = pieces.filter((p) => p.kind === 'curve').length;
   console.log(map);
-  console.log(`\nseed ${args.seed} | ${pieces.length} pieces | ${cps} checkpoints | finish placed | all pieces verified connected\n`);
+  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves) | ${cps} checkpoints | finish placed | geometry verified\n`);
   console.log('TRACK CODE:\n' + code);
 
   const outFile = args.out || process.env.OUTPUT_FILE;
