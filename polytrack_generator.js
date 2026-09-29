@@ -9,9 +9,15 @@
  *   node polytrack_generator.js
  *   node polytrack_generator.js --seed 42 --pieces 30 --turn 0.4
  *   node polytrack_generator.js --env Winter --out track_code.txt --preview track_preview.txt
+ *   node polytrack_generator.js --plain          (skip the self-review, just one random track)
+ *   node polytrack_generator.js --tries 100 --refine 1000   (review harder)
  *
  * Confirmed piece IDs (decoded from real exported tracks):
- *   0 = straight, 5 = start, 6 = finish, 36 = curve, 75 = checkpoint
+ *   0 = straight, 5 = start, 6 = finish, 36 = curve, 75 = checkpoint, ramps = see RAMPS below
+ *
+ * RAMPS: same footprint/rotation as a straight piece, but the piece after it sits `rise`
+ * grid levels higher. Only id 33 (rise 1) is confirmed from a real export; the rest are
+ * estimated from a screenshot and may need correcting - see the RAMPS table.
  *
  * GEOMETRY (all confirmed from real exported tracks):
  *   - The grid step is 4 units. Straight / start / finish / checkpoint fill ONE cell.
@@ -31,6 +37,24 @@ const {
 
 const CELL = 4;
 const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
+
+// Ramp pieces: same 1-cell footprint and rotation rule as a straight piece, but the far
+// end sits `rise` grid levels higher (confirmed for id 33: rise 1, from a real exported
+// connection). The rest are ESTIMATED from a screenshot comparing relative heights, not
+// individually confirmed - verify in-game and adjust RAMPS below if any height is off.
+const RAMPS = [
+  { id: 33, rise: 1 },   // confirmed via real export
+  { id: 145, rise: 2 },  // estimated
+  { id: 35, rise: 3 },   // estimated
+  { id: 170, rise: 2 },  // estimated
+  { id: 171, rise: 1 },  // estimated
+  { id: 13, rise: 2 },   // estimated
+  { id: 14, rise: 1 },   // estimated
+  { id: 148, rise: 3 },  // estimated
+  { id: 147, rise: 1 },  // estimated
+  { id: 17, rise: 2 },   // estimated
+  { id: 18, rise: 3 },   // estimated
+];
 
 // directions as [dx, dz]  (north = -z, east = +x)
 const N = [0, -1], E = [1, 0], S = [0, 1], W = [-1, 0];
@@ -70,7 +94,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -82,7 +106,14 @@ function parseArgs(argv) {
     else if (k === '--name') { a.name = v; i++; }
     else if (k === '--out') { a.out = v; i++; }
     else if (k === '--preview') { a.preview = v; i++; }
+    else if (k === '--tries') { a.tries = parseInt(v, 10); i++; }
+    else if (k === '--refine') { a.refine = parseInt(v, 10); i++; }
+    else if (k === '--plain') { a.tries = 1; a.refine = 0; }
+    else if (k === '--ramp') { a.ramp = parseFloat(v); i++; }
   }
+  if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
+  if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
+  if (!Number.isFinite(a.ramp) || a.ramp < 0) a.ramp = 0;
   if (!Number.isFinite(a.seed)) a.seed = Math.floor(Math.random() * 1e9);
   if (!Number.isFinite(a.pieces) || a.pieces < 4) a.pieces = 4;
   if (!Number.isFinite(a.turn)) a.turn = 0.3;
@@ -102,65 +133,168 @@ function planTurn(front, hIn, side) {
     if (origin) {
       const cells = CURVE_CELLS.map((c) => add(origin, rot(c, r)));
       const nextFront = add(add(front, hIn), scale(hOut, 2));
-      return { kind: 'curve', id: ID.CURVE, rotation: r, origin, cells, nextFront, hOut, entryFace: side === 'R' ? 'A' : 'B' };
+      return { kind: 'curve', id: ID.CURVE, rotation: r, origin, cells, nextFront, hOut, hIn, side, entryFace: side === 'R' ? 'A' : 'B', dy: 0 };
     }
   }
   throw new Error('no curve rotation found');
 }
 
 function planStraight(front, hIn) {
-  return { kind: 'straight', id: ID.STRAIGHT, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front], nextFront: add(front, hIn), hOut: hIn, hIn };
+  return { kind: 'straight', id: ID.STRAIGHT, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front], nextFront: add(front, hIn), hOut: hIn, hIn, dy: 0 };
+}
+
+function planRamp(front, hIn, y, ramp) {
+  return {
+    kind: 'ramp', id: ramp.id, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front],
+    nextFront: add(front, hIn), hOut: hIn, hIn, y, dy: ramp.rise, riseId: ramp.id,
+  };
 }
 
 // ---------------------------------------------------------------- path search
-function generate(rng, n, turnProb) {
-  for (let attempt = 0; attempt < 30000; attempt++) {
-    const pieces = [];
-    const owner = new Map(); // cell -> piece index
-    // a candidate is fine if it overlaps nothing and does not sit side by side with any
-    // piece other than the one it connects to
-    const fits = (cells, prevIdx) => {
-      const mine = new Set(cells.map(key));
-      for (const c of cells) {
-        if (owner.has(key(c))) return false;
-        for (const d of [N, E, S, W]) {
-          const q = add(c, d);
-          if (mine.has(key(q))) continue;
-          const o = owner.get(key(q));
-          if (o !== undefined && o !== prevIdx) return false;
-        }
+/** A track under construction. Choices are 'S' (straight), 'L' or 'R' (turn). */
+function newLayout() {
+  const L = { pieces: [], owner: new Map(), front: [0, -1], h: N };
+  // fine if it overlaps nothing and does not sit side by side with any piece other than the one it connects to
+  L.fits = (cells, prevIdx) => {
+    const mine = new Set(cells.map(key));
+    for (const c of cells) {
+      if (L.owner.has(key(c))) return false;
+      for (const d of [N, E, S, W]) {
+        const q = add(c, d);
+        if (mine.has(key(q))) continue;
+        const o = L.owner.get(key(q));
+        if (o !== undefined && o !== prevIdx) return false;
       }
-      return true;
-    };
-    const place = (p) => { const idx = pieces.length; pieces.push(p); for (const c of p.cells) owner.set(key(c), idx); return idx; };
-
-    // start piece at the origin, facing north
-    place({ kind: 'start', id: ID.START, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1] });
-    let front = [0, -1], h = N, ok = true;
-
-    for (let i = 1; i < n - 1 && ok; i++) {
-      const prevIdx = pieces.length - 1;
-      const turns = rng() < 0.5 ? ['L', 'R'] : ['R', 'L'];
-      const order = rng() < turnProb ? [...turns, 'S'] : ['S', ...turns];
-      let chosen = null;
-      for (const o of order) {
-        const p = o === 'S' ? planStraight(front, h) : planTurn(front, h, o);
-        if (o !== 'S') p.hIn = h;
-        if (fits(p.cells, prevIdx)) { chosen = p; break; }
-      }
-      if (!chosen) { ok = false; break; }
-      place(chosen);
-      front = chosen.nextFront; h = chosen.hOut;
     }
-    if (!ok) continue;
+    return true;
+  };
+  L.place = (p) => { const idx = L.pieces.length; L.pieces.push(p); for (const c of p.cells) L.owner.set(key(c), idx); };
+  L.y = 0;
+  L.tryAdd = (choice) => {
+    let p;
+    if (choice === 'S') p = planStraight(L.front, L.h);
+    else if (choice === 'L' || choice === 'R') p = planTurn(L.front, L.h, choice);
+    else p = planRamp(L.front, L.h, L.y, choice); // choice is a ramp descriptor object
+    p.hIn = L.h;
+    if (p.y === undefined) p.y = L.y;
+    if (!L.fits(p.cells, L.pieces.length - 1)) return false;
+    L.place(p); L.front = p.nextFront; L.h = p.hOut; L.y = L.y + (p.dy || 0);
+    return true;
+  };
+  L.finish = () => {
+    const fin = { kind: 'finish', id: ID.FINISH, rotation: HEAD_ROT.get(key(L.h)), origin: L.front, cells: [L.front], hIn: L.h, hOut: L.h, nextFront: add(L.front, L.h), y: L.y, dy: 0 };
+    if (!L.fits(fin.cells, L.pieces.length - 1)) return false;
+    L.place(fin);
+    return true;
+  };
+  // start piece at the origin, facing north
+  L.place({ kind: 'start', id: ID.START, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: 0, dy: 0 });
+  return L;
+}
 
-    // finish piece
-    const fin = { kind: 'finish', id: ID.FINISH, rotation: HEAD_ROT.get(key(h)), origin: front, cells: [front], hIn: h, hOut: h, nextFront: add(front, h) };
-    if (!fits(fin.cells, pieces.length - 1)) continue;
-    place(fin);
-    return pieces;
+/** Lay a track out from a list of choices. Returns null if it does not fit. */
+function build(choices) {
+  const L = newLayout();
+  for (const c of choices) if (!L.tryAdd(c)) return null;
+  return L.finish() ? L.pieces : null;
+}
+
+function isTurnToken(c) { return c === 'S' || c === 'L' || c === 'R'; }
+
+/** One random valid list of choices. */
+function randomChoices(rng, n, turnProb, rampProb) {
+  for (let attempt = 0; attempt < 30000; attempt++) {
+    const L = newLayout();
+    const choices = [];
+    let ok = true;
+    for (let i = 0; i < n - 2 && ok; i++) {
+      const turns = rng() < 0.5 ? ['L', 'R'] : ['R', 'L'];
+      let order = rng() < turnProb ? [...turns, 'S'] : ['S', ...turns];
+      // occasionally try a ramp (up or down) before falling back to the usual order -
+      // ramps only make sense on level ground with no elevation already changing here
+      if (rampProb > 0 && rng() < rampProb) {
+        const up = RAMPS[Math.floor(rng() * RAMPS.length)];
+        const down = { id: up.id, rise: -up.rise, down: true };
+        order = rng() < 0.5 ? [up, down, ...order] : [down, up, ...order];
+      }
+      ok = false;
+      for (const o of order) if (L.tryAdd(o)) { choices.push(o); ok = true; break; }
+    }
+    if (ok && L.finish()) return choices;
   }
-  throw new Error('could not build a track - try fewer pieces or a lower --turn value');
+  throw new Error('could not build a track - try fewer pieces, a lower --turn, or a lower --ramp value');
+}
+
+// ---------------------------------------------------------------- the "eye": scoring a track
+/** Higher is better: interesting, varied, no long dull stretches, no endless spirals. */
+function score(pieces) {
+  const road = pieces.slice(1, -1);
+  let s = 0;
+
+  // long straight stretches are boring
+  let run = 0;
+  const flush = () => { if (run > 5) s -= 1.5 * Math.pow(run - 5, 1.5); run = 0; };
+  for (const p of road) { if (p.kind === 'curve') flush(); else run++; }
+  flush();
+
+  // a healthy share of the road should be curves
+  const curves = road.filter((p) => p.kind === 'curve');
+  const ratio = curves.length / Math.max(1, road.length);
+  s -= 40 * Math.max(0, 0.25 - ratio) + 20 * Math.max(0, ratio - 0.5);
+
+  // balance left and right so the track does not just circle
+  const signs = curves.map((p) => p.side);
+  const nR = signs.filter((x) => x === 'R').length, nL = signs.length - nR;
+  s -= 4 * Math.max(0, Math.abs(nR - nL) - 2);
+
+  // reward chicanes (left-right-left), punish three same turns in a row
+  let alt = 0, same3 = 0;
+  for (let i = 1; i < signs.length; i++) if (signs[i] !== signs[i - 1]) alt++;
+  for (let i = 2; i < signs.length; i++) if (signs[i] === signs[i - 1] && signs[i] === signs[i - 2]) same3++;
+  s += Math.min(alt, 8) - 3 * same3;
+
+  // finish should not be right next to the start
+  const a = pieces[0].origin, b = pieces[pieces.length - 1].origin;
+  s += Math.min(Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]), pieces.length / 3) * 0.5;
+  return s;
+}
+
+/** Change 1-3 random choices. */
+function mutate(rng, choices) {
+  const c = choices.slice();
+  const idx = c.map((x, i) => i).filter((i) => isTurnToken(c[i]));
+  if (idx.length === 0) return c;
+  const k = Math.min(idx.length, 1 + Math.floor(rng() * 3));
+  for (let i = 0; i < k; i++) {
+    const j = idx[Math.floor(rng() * idx.length)];
+    const opts = ['S', 'L', 'R'].filter((x) => x !== c[j]);
+    c[j] = opts[Math.floor(rng() * 2)];
+  }
+  return c;
+}
+
+/**
+ * Draw `tries` random tracks and keep the best, then keep tweaking it:
+ * every change that makes the track score higher is kept, the rest are thrown away.
+ */
+function smartTrack(rng, n, turnProb, tries, refine, rampProb) {
+  let best = null, firstScore = null;
+  for (let t = 0; t < Math.max(1, tries); t++) {
+    const choices = randomChoices(rng, n, turnProb, rampProb);
+    const pieces = build(choices);
+    const s = score(pieces);
+    if (t === 0) firstScore = s;
+    if (!best || s > best.s) best = { choices, pieces, s };
+  }
+  let changes = 0;
+  for (let i = 0; i < refine; i++) {
+    const c = mutate(rng, best.choices);
+    const p = build(c);
+    if (!p) continue;
+    const s = score(p);
+    if (s > best.s) { best = { choices: c, pieces: p, s }; changes++; }
+  }
+  return { pieces: best.pieces, score: best.s, firstScore, changes };
 }
 
 /** Turn some straights into checkpoints. */
@@ -185,10 +319,13 @@ function ports(p) {
   const c = scale(p.origin, CELL);
   if (p.kind !== 'curve') {
     const h = p.hIn || p.hOut;
-    return { entry: { at: add(c, scale(h, -2)), out: neg(h) }, exit: { at: add(c, scale(h, 2)), out: h } };
+    return {
+      entry: { at: add(c, scale(h, -2)), out: neg(h), y: p.y },
+      exit: { at: add(c, scale(h, 2)), out: h, y: p.y + (p.dy || 0) },
+    };
   }
-  const A = { at: add(c, rot([0, 2], p.rotation)), out: rot(S, p.rotation) };
-  const B = { at: add(c, rot([6, -4], p.rotation)), out: rot(E, p.rotation) };
+  const A = { at: add(c, rot([0, 2], p.rotation)), out: rot(S, p.rotation), y: p.y };
+  const B = { at: add(c, rot([6, -4], p.rotation)), out: rot(E, p.rotation), y: p.y };
   return p.entryFace === 'A' ? { entry: A, exit: B } : { entry: B, exit: A };
 }
 
@@ -198,6 +335,7 @@ function verify(pieces) {
   for (let i = 0; i < pieces.length - 1; i++) {
     const a = ports(pieces[i]).exit, b = ports(pieces[i + 1]).entry;
     if (!eq(a.at, b.at) || !eq(a.out, neg(b.out))) throw new Error(`pieces ${i} and ${i + 1} do not connect`);
+    if (a.y !== b.y) throw new Error(`pieces ${i} and ${i + 1} do not line up in height`);
   }
 }
 
@@ -221,7 +359,8 @@ function preview(pieces) {
         at.set(key(c), faceChar(seg.f.map((d) => rot(d, p.rotation))));
       }
     } else {
-      const ch = p.kind === 'start' ? 'S' : p.kind === 'finish' ? 'F' : p.kind === 'checkpoint' ? 'C' : (p.rotation === 0 ? '│' : '─');
+      const ch = p.kind === 'start' ? 'S' : p.kind === 'finish' ? 'F' : p.kind === 'checkpoint' ? 'C'
+        : p.kind === 'ramp' ? (p.dy > 0 ? '^' : 'v') : (p.rotation === 0 ? '│' : '─');
       at.set(key(p.origin), ch);
     }
   }
@@ -244,9 +383,9 @@ function toTrackCode(pieces, args) {
   const groups = new Map();
   let maxCoord = 0;
   for (const p of pieces) {
-    const x = (p.origin[0] - minX) * CELL, z = (p.origin[1] - minZ) * CELL;
-    maxCoord = Math.max(maxCoord, x, z);
-    const block = { x, y: 0, z, rotation: p.rotation, dir: 'YPos', color: 0 };
+    const x = (p.origin[0] - minX) * CELL, z = (p.origin[1] - minZ) * CELL, y = p.y || 0;
+    maxCoord = Math.max(maxCoord, x, z, y);
+    const block = { x, y, z, rotation: p.rotation, dir: 'YPos', color: 0 };
     if (p.kind === 'start') block.startOrder = 0;
     if (p.kind === 'checkpoint') block.cpOrder = p.cpOrder;
     if (!groups.has(p.id)) groups.set(p.id, []);
@@ -256,7 +395,7 @@ function toTrackCode(pieces, args) {
   const parts = [...groups.entries()].map(([id, blocks]) => ({ id, amount: blocks.length, blocks }));
   const trackData = encodeTrackDataV6({
     env: args.env, sunDir: 127, minX: 0, minY: 0, minZ: 0,
-    dataBytes: bytes | (1 << 2) | (bytes << 4), parts,
+    dataBytes: bytes | (bytes << 2) | (bytes << 4), parts,
   });
   return encodeTrackCodeV6({ name: args.name, author: null, lastModified: null, trackData });
 }
@@ -265,7 +404,8 @@ function toTrackCode(pieces, args) {
 function main() {
   const args = parseArgs(process.argv);
   const rng = mulberry32(args.seed);
-  const pieces = generate(rng, args.pieces, args.turn);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp);
+  const pieces = smart.pieces;
   addCheckpoints(pieces, args.cpEvery);
   verify(pieces);
 
@@ -276,8 +416,10 @@ function main() {
   const map = preview(pieces);
   const cps = pieces.filter((p) => p.kind === 'checkpoint').length;
   const curves = pieces.filter((p) => p.kind === 'curve').length;
+  const ramps = pieces.filter((p) => p.kind === 'ramp').length;
   console.log(map);
-  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves) | ${cps} checkpoints | finish placed | geometry verified\n`);
+  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps) | ${cps} checkpoints | finish placed | geometry verified`);
+  console.log(`quality score ${smart.score.toFixed(1)} (first random draw scored ${smart.firstScore.toFixed(1)}, ${smart.changes} improving changes kept)\n`);
   console.log('TRACK CODE:\n' + code);
 
   const outFile = args.out || process.env.OUTPUT_FILE;
@@ -285,4 +427,5 @@ function main() {
   if (args.preview) fs.writeFileSync(args.preview, `seed ${args.seed}\n\n${map}\n`);
 }
 
-main();
+if (require.main === module) main();
+module.exports = { smartTrack, randomChoices, build, score, mulberry32 };
