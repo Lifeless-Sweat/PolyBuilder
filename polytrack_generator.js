@@ -43,18 +43,14 @@ const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 // connection). The rest are ESTIMATED from a screenshot comparing relative heights, not
 // individually confirmed - verify in-game and adjust RAMPS below if any height is off.
 const RAMPS = [
-  { id: 33, rise: 1 },   // confirmed via real export
-  { id: 145, rise: 2 },  // estimated
-  { id: 35, rise: 3 },   // estimated
-  { id: 170, rise: 2 },  // estimated
-  { id: 171, rise: 1 },  // estimated
-  { id: 13, rise: 2 },   // estimated
-  { id: 14, rise: 1 },   // estimated
-  { id: 148, rise: 3 },  // estimated
-  { id: 147, rise: 1 },  // estimated
-  { id: 17, rise: 2 },   // estimated
-  { id: 18, rise: 3 },   // estimated
+  { id: 33, rise: 1 }, // confirmed via real export: 1 cell long, rises 1 level
 ];
+// The other 10 ramp ids (145, 35, 170, 171, 13, 14, 148, 147, 17, 18) are NOT used yet -
+// an earlier attempt guessed their height from a screenshot and produced floating/
+// disconnected track sections in-game. They're very likely longer than 1 cell too
+// (a gentler climb needs more length as well as more height), so both dimensions need
+// a real single-ramp connect test (like the one that confirmed id 33) before they're safe
+// to use. Re-enable one at a time here once confirmed, with { id, rise, cells: N }.
 
 // directions as [dx, dz]  (north = -z, east = +x)
 const N = [0, -1], E = [1, 0], S = [0, 1], W = [-1, 0];
@@ -170,6 +166,8 @@ function newLayout() {
   };
   L.place = (p) => { const idx = L.pieces.length; L.pieces.push(p); for (const c of p.cells) L.owner.set(key(c), idx); };
   L.y = 0;
+  L.sinceRamp = 99; // pieces since the last ramp event (up or down)
+  L.sinceTurn = 99; // pieces since the last curve
   L.tryAdd = (choice) => {
     let p;
     if (choice === 'S') p = planStraight(L.front, L.h);
@@ -177,8 +175,15 @@ function newLayout() {
     else p = planRamp(L.front, L.h, L.y, choice); // choice is a ramp descriptor object
     p.hIn = L.h;
     if (p.y === undefined) p.y = L.y;
+    const isRamp = p.kind === 'ramp';
+    const isTurn = p.kind === 'curve';
+    // keep ramps away from each other and from turns, so a hill has flat ground on both sides
+    if (isRamp && (L.sinceRamp < 3 || L.sinceTurn < 2)) return false;
+    if (isTurn && L.sinceRamp < 2) return false;
     if (!L.fits(p.cells, L.pieces.length - 1)) return false;
     L.place(p); L.front = p.nextFront; L.h = p.hOut; L.y = L.y + (p.dy || 0);
+    L.sinceRamp = isRamp ? 0 : L.sinceRamp + 1;
+    L.sinceTurn = isTurn ? 0 : L.sinceTurn + 1;
     return true;
   };
   L.finish = () => {
@@ -380,10 +385,14 @@ function preview(pieces) {
 function toTrackCode(pieces, args) {
   const minX = Math.min(...pieces.map((p) => p.origin[0]));
   const minZ = Math.min(...pieces.map((p) => p.origin[1]));
+  // a "down" ramp can dip below the starting height - shift everything up so the
+  // lowest point sits at y=0. Without this, negative y wraps to a huge unsigned byte
+  // (e.g. -1 becomes 255) and the piece renders sky-high instead of underground.
+  const minY = Math.min(...pieces.map((p) => p.y || 0));
   const groups = new Map();
   let maxCoord = 0;
   for (const p of pieces) {
-    const x = (p.origin[0] - minX) * CELL, z = (p.origin[1] - minZ) * CELL, y = p.y || 0;
+    const x = (p.origin[0] - minX) * CELL, z = (p.origin[1] - minZ) * CELL, y = (p.y || 0) - minY;
     maxCoord = Math.max(maxCoord, x, z, y);
     const block = { x, y, z, rotation: p.rotation, dir: 'YPos', color: 0 };
     if (p.kind === 'start') block.startOrder = 0;
