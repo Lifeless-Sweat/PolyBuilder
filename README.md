@@ -77,9 +77,13 @@ them against what actually happened in-game.
 
 ## Known limitations
 
-- **Only one ramp type is used.** PolyTrack has 11 ramp pieces of different lengths and
-  heights; only the smallest is confirmed and enabled in the generator. Using the others
-  without testing them the same way caused floating, disconnected track sections.
+- **Only one ramp type is used.** PolyTrack has 11 ramp pieces (see the [PolyModLoader
+  wiki's part list](https://wiki-vp.polymodloader.com/pmlapi/EditorExtras), which the
+  codec's `PART_NAMES` table mirrors) of different lengths and widths; only
+  `PlaneSlopeUp` (id 33) is confirmed and enabled in the generator. The naming makes the
+  others' shapes much clearer now ("Long" = longer piece, "Wide" = wider, "Half" = half
+  height/width) but they still need the same real-export connection test before they're
+  safe to use.
 - **Loops (tracks that return to their own start) aren't generated** — only point-to-point
   tracks (start → checkpoints → finish). Closing a loop needs the last piece to land back
   on the start's exact position and height, which is a harder constraint than this
@@ -87,11 +91,15 @@ them against what actually happened in-game.
 - **Checkpoint order** is numbered 0, 1, 2... in the order the track visits them; this
   matches how the pieces were placed but hasn't been separately confirmed against the
   game's own checkpoint-order rules.
+- This project only uses a handful of PolyTrack's ~190 pieces (road, turns, ramps, start/
+  finish/checkpoint). Walls, pillars, signs, intersections, and wide/plane variants are
+  all in `PART_NAMES` already but the generator doesn't place any of them yet.
 
 ## Credits
 
 The track code container format (compression + custom base62 encoding) was reverse-engineered
 by [Ireozar](https://codeberg.org/Ireozar)'s open-source
-[`polytrack-codes`](https://docs.rs/polytrack-codes) Rust crate. The piece IDs, curve/ramp
-geometry, and connection rules on top of that were worked out from scratch for this project
-by decoding real exported tracks.
+[`polytrack-codes`](https://docs.rs/polytrack-codes) Rust crate. The full piece ID list
+comes from the [PolyModLoader wiki](https://wiki-vp.polymodloader.com/pmlapi/EditorExtras).
+The curve/ramp connection geometry on top of both of those was worked out from scratch for
+this project by decoding real exported tracks.
