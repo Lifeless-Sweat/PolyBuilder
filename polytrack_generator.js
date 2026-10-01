@@ -38,6 +38,13 @@ const {
 const CELL = 4;
 const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 
+// Alternate styles for start / finish / checkpoint - all single-cell, non-connecting
+// markers with the same placement rule as the base ones above, just a different gate
+// look. Picked randomly per-track for variety.
+const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, PlaneStartWide
+const FINISH_STYLES = [6, 74, 76, 78];       // Finish, FinishWide, PlaneFinish, PlaneFinishWide
+const CHECKPOINT_STYLES = [52, 65, 75, 77];  // Checkpoint, CheckpointWide, PlaneCheckpoint, PlaneCheckpointWide
+
 // Ramp pieces: same 1-cell footprint and rotation rule as a straight piece, but the far
 // end sits `rise` grid levels higher (confirmed for id 33: rise 1, from a real exported
 // connection). The rest are ESTIMATED from a screenshot comparing relative heights, not
@@ -148,8 +155,11 @@ function planRamp(front, hIn, y, ramp) {
 
 // ---------------------------------------------------------------- path search
 /** A track under construction. Choices are 'S' (straight), 'L' or 'R' (turn). */
-function newLayout() {
-  const L = { pieces: [], owner: new Map(), front: [0, -1], h: N };
+const DEFAULT_STYLES = { startId: ID.START, finishId: ID.FINISH, cpId: 75 };
+
+function newLayout(styles) {
+  const { startId, finishId } = styles || DEFAULT_STYLES;
+  const L = { pieces: [], owner: new Map(), front: [0, -1], h: N, finishId };
   // fine if it overlaps nothing and does not sit side by side with any piece other than the one it connects to
   L.fits = (cells, prevIdx) => {
     const mine = new Set(cells.map(key));
@@ -187,19 +197,19 @@ function newLayout() {
     return true;
   };
   L.finish = () => {
-    const fin = { kind: 'finish', id: ID.FINISH, rotation: HEAD_ROT.get(key(L.h)), origin: L.front, cells: [L.front], hIn: L.h, hOut: L.h, nextFront: add(L.front, L.h), y: L.y, dy: 0 };
+    const fin = { kind: 'finish', id: L.finishId, rotation: HEAD_ROT.get(key(L.h)), origin: L.front, cells: [L.front], hIn: L.h, hOut: L.h, nextFront: add(L.front, L.h), y: L.y, dy: 0 };
     if (!L.fits(fin.cells, L.pieces.length - 1)) return false;
     L.place(fin);
     return true;
   };
   // start piece at the origin, facing north
-  L.place({ kind: 'start', id: ID.START, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: 0, dy: 0 });
+  L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: 0, dy: 0 });
   return L;
 }
 
 /** Lay a track out from a list of choices. Returns null if it does not fit. */
-function build(choices) {
-  const L = newLayout();
+function build(choices, styles) {
+  const L = newLayout(styles);
   for (const c of choices) if (!L.tryAdd(c)) return null;
   return L.finish() ? L.pieces : null;
 }
@@ -207,9 +217,9 @@ function build(choices) {
 function isTurnToken(c) { return c === 'S' || c === 'L' || c === 'R'; }
 
 /** One random valid list of choices. */
-function randomChoices(rng, n, turnProb, rampProb) {
+function randomChoices(rng, n, turnProb, rampProb, styles) {
   for (let attempt = 0; attempt < 30000; attempt++) {
-    const L = newLayout();
+    const L = newLayout(styles);
     const choices = [];
     let ok = true;
     for (let i = 0; i < n - 2 && ok; i++) {
@@ -283,10 +293,15 @@ function mutate(rng, choices) {
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
 function smartTrack(rng, n, turnProb, tries, refine, rampProb) {
+  const styles = {
+    startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
+    finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
+    cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
+  };
   let best = null, firstScore = null;
   for (let t = 0; t < Math.max(1, tries); t++) {
-    const choices = randomChoices(rng, n, turnProb, rampProb);
-    const pieces = build(choices);
+    const choices = randomChoices(rng, n, turnProb, rampProb, styles);
+    const pieces = build(choices, styles);
     const s = score(pieces);
     if (t === 0) firstScore = s;
     if (!best || s > best.s) best = { choices, pieces, s };
@@ -294,22 +309,23 @@ function smartTrack(rng, n, turnProb, tries, refine, rampProb) {
   let changes = 0;
   for (let i = 0; i < refine; i++) {
     const c = mutate(rng, best.choices);
-    const p = build(c);
+    const p = build(c, styles);
     if (!p) continue;
     const s = score(p);
     if (s > best.s) { best = { choices: c, pieces: p, s }; changes++; }
   }
+  addCheckpoints(best.pieces, build.cpEvery || 6, styles.cpId);
   return { pieces: best.pieces, score: best.s, firstScore, changes };
 }
 
 /** Turn some straights into checkpoints. */
-function addCheckpoints(pieces, cpEvery) {
+function addCheckpoints(pieces, cpEvery, cpId) {
   let since = 0, count = 0;
   for (let i = 1; i < pieces.length - 2; i++) {
     since++;
     const p = pieces[i];
     if (p.kind === 'straight' && since >= cpEvery) {
-      p.kind = 'checkpoint'; p.id = ID.CHECKPOINT; p.rotation = HEAD_ROT.get(key(p.hIn)); p.cpOrder = count++;
+      p.kind = 'checkpoint'; p.id = cpId; p.rotation = HEAD_ROT.get(key(p.hIn)); p.cpOrder = count++;
       since = 0;
     }
   }
@@ -413,9 +429,10 @@ function toTrackCode(pieces, args) {
 function main() {
   const args = parseArgs(process.argv);
   const rng = mulberry32(args.seed);
+  smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
+  build.cpEvery = args.cpEvery;
   const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp);
   const pieces = smart.pieces;
-  addCheckpoints(pieces, args.cpEvery);
   verify(pieces);
 
   const code = toTrackCode(pieces, args);
