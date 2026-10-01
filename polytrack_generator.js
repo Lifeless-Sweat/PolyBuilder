@@ -42,6 +42,14 @@ const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 // markers with the same placement rule as the base ones above, just a different gate
 // look. Picked randomly per-track for variety.
 const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, PlaneStartWide
+// Straight-like 1-cell pieces, assumed to share Straight's connection rule (untested on the
+// exit side - this is the "add now, fix after" batch). Mix of a plain road id and some
+// Wide/Pillar/Tilted skins, since those are same-shape reskins in every other game of this kind.
+const STRAIGHT_STYLES = [0, 10, 119, 120, 159];      // Straight, StraightWide, StraightPillarBottom/Short, StraightTilted
+// TurnLong family: reusing TurnShort's exact confirmed 2x2/radius-6 connection math as a
+// first guess, since their real footprint hasn't been tested. Most likely to need a real
+// fix once seen in-game - if a turn looks wrong, tell me which id and we'll test just that one.
+const CURVE_STYLES = [36, 37, 82, 83];               // TurnShort, TurnLong, TurnLong2, TurnLong3
 const FINISH_STYLES = [6, 74, 76, 78];       // Finish, FinishWide, PlaneFinish, PlaneFinishWide
 const CHECKPOINT_STYLES = [52, 65, 75, 77];  // Checkpoint, CheckpointWide, PlaneCheckpoint, PlaneCheckpointWide
 
@@ -97,7 +105,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: true,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -113,6 +121,7 @@ function parseArgs(argv) {
     else if (k === '--refine') { a.refine = parseInt(v, 10); i++; }
     else if (k === '--plain') { a.tries = 1; a.refine = 0; }
     else if (k === '--ramp') { a.ramp = parseFloat(v); i++; }
+    else if (k === '--no-variety') { a.variety = false; }
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
@@ -126,7 +135,8 @@ function parseArgs(argv) {
 
 // ---------------------------------------------------------------- pieces
 /** Work out a curve for a turn: which rotation, where its block sits, where we are afterwards. */
-function planTurn(front, hIn, side) {
+function planTurn(front, hIn, side, styles, rng) {
+  const curveId = (styles && styles.curveIds && rng) ? styles.curveIds[Math.floor(rng() * styles.curveIds.length)] : ID.CURVE;
   const hOut = side === 'R' ? turnRight(hIn) : turnLeft(hIn);
   for (let r = 0; r < 4; r++) {
     const nearFace = rot(S, r), farFace = rot(E, r);
@@ -136,14 +146,15 @@ function planTurn(front, hIn, side) {
     if (origin) {
       const cells = CURVE_CELLS.map((c) => add(origin, rot(c, r)));
       const nextFront = add(add(front, hIn), scale(hOut, 2));
-      return { kind: 'curve', id: ID.CURVE, rotation: r, origin, cells, nextFront, hOut, hIn, side, entryFace: side === 'R' ? 'A' : 'B', dy: 0 };
+      return { kind: 'curve', id: curveId, rotation: r, origin, cells, nextFront, hOut, hIn, side, entryFace: side === 'R' ? 'A' : 'B', dy: 0 };
     }
   }
   throw new Error('no curve rotation found');
 }
 
-function planStraight(front, hIn) {
-  return { kind: 'straight', id: ID.STRAIGHT, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front], nextFront: add(front, hIn), hOut: hIn, hIn, dy: 0 };
+function planStraight(front, hIn, styles, rng) {
+  const id = (styles && styles.straightIds && rng) ? styles.straightIds[Math.floor(rng() * styles.straightIds.length)] : ID.STRAIGHT;
+  return { kind: 'straight', id, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front], nextFront: add(front, hIn), hOut: hIn, hIn, dy: 0 };
 }
 
 function planRamp(front, hIn, y, ramp) {
@@ -157,9 +168,9 @@ function planRamp(front, hIn, y, ramp) {
 /** A track under construction. Choices are 'S' (straight), 'L' or 'R' (turn). */
 const DEFAULT_STYLES = { startId: ID.START, finishId: ID.FINISH, cpId: 75 };
 
-function newLayout(styles) {
+function newLayout(styles, rng) {
   const { startId, finishId } = styles || DEFAULT_STYLES;
-  const L = { pieces: [], owner: new Map(), front: [0, -1], h: N, finishId };
+  const L = { pieces: [], owner: new Map(), front: [0, -1], h: N, finishId, styles, rng };
   // fine if it overlaps nothing and does not sit side by side with any piece other than the one it connects to
   L.fits = (cells, prevIdx) => {
     const mine = new Set(cells.map(key));
@@ -180,8 +191,8 @@ function newLayout(styles) {
   L.sinceTurn = 99; // pieces since the last curve
   L.tryAdd = (choice) => {
     let p;
-    if (choice === 'S') p = planStraight(L.front, L.h);
-    else if (choice === 'L' || choice === 'R') p = planTurn(L.front, L.h, choice);
+    if (choice === 'S') p = planStraight(L.front, L.h, L.styles, L.rng);
+    else if (choice === 'L' || choice === 'R') p = planTurn(L.front, L.h, choice, L.styles, L.rng);
     else p = planRamp(L.front, L.h, L.y, choice); // choice is a ramp descriptor object
     p.hIn = L.h;
     if (p.y === undefined) p.y = L.y;
@@ -209,7 +220,7 @@ function newLayout(styles) {
 
 /** Lay a track out from a list of choices. Returns null if it does not fit. */
 function build(choices, styles) {
-  const L = newLayout(styles);
+  const L = newLayout(styles, mulberry32(1)); // fixed rng: style re-picks during refine stay stable per-cell
   for (const c of choices) if (!L.tryAdd(c)) return null;
   return L.finish() ? L.pieces : null;
 }
@@ -219,7 +230,7 @@ function isTurnToken(c) { return c === 'S' || c === 'L' || c === 'R'; }
 /** One random valid list of choices. */
 function randomChoices(rng, n, turnProb, rampProb, styles) {
   for (let attempt = 0; attempt < 30000; attempt++) {
-    const L = newLayout(styles);
+    const L = newLayout(styles, rng);
     const choices = [];
     let ok = true;
     for (let i = 0; i < n - 2 && ok; i++) {
@@ -292,11 +303,13 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
     cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
+    straightIds: useVariety ? STRAIGHT_STYLES : [ID.STRAIGHT],
+    curveIds: useVariety ? CURVE_STYLES : [ID.CURVE],
   };
   let best = null, firstScore = null;
   for (let t = 0; t < Math.max(1, tries); t++) {
@@ -431,7 +444,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety);
   const pieces = smart.pieces;
   verify(pieces);
 
