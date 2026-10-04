@@ -41,7 +41,11 @@ const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 // Alternate styles for start / finish / checkpoint - all single-cell, non-connecting
 // markers with the same placement rule as the base ones above, just a different gate
 // look. Picked randomly per-track for variety.
-const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, PlaneStartWide
+// Only the individually-confirmed id for each. Two real in-game breaks (Pillar/Tilted
+// straights, and most likely a non-Plane checkpoint's mounting base) came from assuming
+// same-family ids behave identically without testing each one - so these stay locked to
+// single confirmed values rather than offering unverified siblings.
+const START_STYLES = [5];        // Start
 // Straight-like 1-cell pieces, assumed to share Straight's connection rule (untested on the
 // exit side - this is the "add now, fix after" batch). Pillar and Tilted variants were
 // pulled out after a confirmed in-game mismatch: they likely don't share the same height
@@ -53,8 +57,8 @@ const STRAIGHT_STYLES = [0, 10];                      // Straight, StraightWide
 // its connection math as a guess and it produced gaps in real tracks (confirmed in-game).
 // Back to just the one confirmed curve until the TurnLong family gets a real export test.
 const CURVE_STYLES = [36];                            // TurnShort only
-const FINISH_STYLES = [6, 74, 76, 78];       // Finish, FinishWide, PlaneFinish, PlaneFinishWide
-const CHECKPOINT_STYLES = [52, 65, 75, 77];  // Checkpoint, CheckpointWide, PlaneCheckpoint, PlaneCheckpointWide
+const FINISH_STYLES = [6];       // Finish
+const CHECKPOINT_STYLES = [75];  // PlaneCheckpoint - the one actually seen in a real export
 
 // Ramp pieces: same 1-cell footprint and rotation rule as a straight piece, but the far
 // end sits `rise` grid levels higher (confirmed for id 33: rise 1, from a real exported
@@ -464,11 +468,9 @@ function toTrackCode(pieces, args) {
 // ---------------------------------------------------------------- main
 function main() {
   const args = parseArgs(process.argv);
-  if (args.variety) {
-    START_STYLES = START_STYLES_EXPERIMENTAL; FINISH_STYLES = FINISH_STYLES_EXPERIMENTAL;
-    CHECKPOINT_STYLES = CHECKPOINT_STYLES_EXPERIMENTAL; STRAIGHT_STYLES = STRAIGHT_STYLES_EXPERIMENTAL;
-    CURVE_STYLES = CURVE_STYLES_EXPERIMENTAL;
-  }
+  // NOTE: --variety currently has nothing unverified left to opt into - every style list
+  // above is locked to single confirmed ids after real in-game breaks. The flag is kept
+  // as a no-op rather than removed, so it doesn't error out for anyone already using it.
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
