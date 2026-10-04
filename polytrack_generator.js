@@ -108,7 +108,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: true, startHeight: 0,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 0,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -125,6 +125,7 @@ function parseArgs(argv) {
     else if (k === '--plain') { a.tries = 1; a.refine = 0; }
     else if (k === '--ramp') { a.ramp = parseFloat(v); i++; }
     else if (k === '--no-variety') { a.variety = false; }
+    else if (k === '--variety') { a.variety = true; }
     else if (k === '--start-height') { a.startHeight = parseInt(v, 10); i++; }
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
@@ -219,17 +220,18 @@ function newLayout(styles, rng) {
     return true;
   };
   // start piece at the origin, facing north
-  const startHeight0 = (styles && styles.startHeight) || 0;
+  const startHeight0 = -((styles && styles.startHeight) || 0); // start BELOW ground, climb up via confirmed ramps
   L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: startHeight0, dy: 0 });
   L.front = [0, -1]; L.h = N; L.y = startHeight0;
-  // optional elevated start: chain confirmed down-ramps (PlaneSlopeUp, id 33, used in
-  // reverse) right after the start, so the track begins high up and descends to ground
-  // level before the random path begins. Only uses geometry we've verified in-game.
+  // Elevated start: begins BELOW ground and climbs UP to track level using the one ramp
+  // direction we've actually confirmed in-game (low side in, high side out). Climbing up
+  // gives the same "the start isn't flat ground" effect as descending would, without
+  // relying on the untested/broken "down" traversal.
   const startHeight = (styles && styles.startHeight) || 0;
   for (let i = 0; i < startHeight; i++) {
     L.sinceRamp = 99; // this is an intentional staircase - the normal ramp-spacing rule doesn't apply here
-    const down = { id: 33, rise: -1 };
-    if (!L.tryAdd(down)) break; // stop early if it somehow can't fit (shouldn't happen in a straight line)
+    const up = { id: 33, rise: 1 };
+    if (!L.tryAdd(up)) break; // stop early if it somehow can't fit (shouldn't happen in a straight line)
   }
   L.sinceRamp = 99; // reset so the random path after this doesn't inherit a fake "just had a ramp" state
   return L;
@@ -253,12 +255,15 @@ function randomChoices(rng, n, turnProb, rampProb, styles) {
     for (let i = 0; i < n - 2 && ok; i++) {
       const turns = rng() < 0.5 ? ['L', 'R'] : ['R', 'L'];
       let order = rng() < turnProb ? [...turns, 'S'] : ['S', ...turns];
-      // occasionally try a ramp (up or down) before falling back to the usual order -
-      // ramps only make sense on level ground with no elevation already changing here
+      // Only "up" ramps are used - a real export only confirmed the piece's one physical
+      // direction (low side in, high side out). Reusing the same piece/rotation to fake a
+      // "down" traversal by just flipping our own dy sign doesn't match what the piece
+      // actually does in-game - confirmed broken (floating/disconnected piece in a real
+      // track). Going downhill would need a genuinely different, separately-tested piece
+      // (PlaneSlopeDown, id 34) or a properly reversed traversal - neither is done yet.
       if (rampProb > 0 && rng() < rampProb) {
         const up = RAMPS[Math.floor(rng() * RAMPS.length)];
-        const down = { id: up.id, rise: -up.rise, down: true };
-        order = rng() < 0.5 ? [up, down, ...order] : [down, up, ...order];
+        order = [up, ...order];
       }
       ok = false;
       for (const o of order) if (L.tryAdd(o)) { choices.push(o); ok = true; break; }
@@ -459,6 +464,11 @@ function toTrackCode(pieces, args) {
 // ---------------------------------------------------------------- main
 function main() {
   const args = parseArgs(process.argv);
+  if (args.variety) {
+    START_STYLES = START_STYLES_EXPERIMENTAL; FINISH_STYLES = FINISH_STYLES_EXPERIMENTAL;
+    CHECKPOINT_STYLES = CHECKPOINT_STYLES_EXPERIMENTAL; STRAIGHT_STYLES = STRAIGHT_STYLES_EXPERIMENTAL;
+    CURVE_STYLES = CURVE_STYLES_EXPERIMENTAL;
+  }
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
