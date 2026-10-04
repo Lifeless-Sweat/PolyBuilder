@@ -43,9 +43,12 @@ const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 // look. Picked randomly per-track for variety.
 const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, PlaneStartWide
 // Straight-like 1-cell pieces, assumed to share Straight's connection rule (untested on the
-// exit side - this is the "add now, fix after" batch). Mix of a plain road id and some
-// Wide/Pillar/Tilted skins, since those are same-shape reskins in every other game of this kind.
-const STRAIGHT_STYLES = [0, 10, 119, 120, 159];      // Straight, StraightWide, StraightPillarBottom/Short, StraightTilted
+// exit side - this is the "add now, fix after" batch). Pillar and Tilted variants were
+// pulled out after a confirmed in-game mismatch: they likely don't share the same height
+// baseline as a plain Straight at the same y value (a Pillar piece probably sits on a
+// support column of its own, not flush with the road the way Straight does), so mixing
+// them produced a visibly disconnected block. StraightWide looked fine and stays in.
+const STRAIGHT_STYLES = [0, 10];                      // Straight, StraightWide
 // TurnLong/TurnLong2/TurnLong3 do NOT share TurnShort's exact footprint - tried reusing
 // its connection math as a guess and it produced gaps in real tracks (confirmed in-game).
 // Back to just the one confirmed curve until the TurnLong family gets a real export test.
