@@ -46,10 +46,10 @@ const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, Pl
 // exit side - this is the "add now, fix after" batch). Mix of a plain road id and some
 // Wide/Pillar/Tilted skins, since those are same-shape reskins in every other game of this kind.
 const STRAIGHT_STYLES = [0, 10, 119, 120, 159];      // Straight, StraightWide, StraightPillarBottom/Short, StraightTilted
-// TurnLong family: reusing TurnShort's exact confirmed 2x2/radius-6 connection math as a
-// first guess, since their real footprint hasn't been tested. Most likely to need a real
-// fix once seen in-game - if a turn looks wrong, tell me which id and we'll test just that one.
-const CURVE_STYLES = [36, 37, 82, 83];               // TurnShort, TurnLong, TurnLong2, TurnLong3
+// TurnLong/TurnLong2/TurnLong3 do NOT share TurnShort's exact footprint - tried reusing
+// its connection math as a guess and it produced gaps in real tracks (confirmed in-game).
+// Back to just the one confirmed curve until the TurnLong family gets a real export test.
+const CURVE_STYLES = [36];                            // TurnShort only
 const FINISH_STYLES = [6, 74, 76, 78];       // Finish, FinishWide, PlaneFinish, PlaneFinishWide
 const CHECKPOINT_STYLES = [52, 65, 75, 77];  // Checkpoint, CheckpointWide, PlaneCheckpoint, PlaneCheckpointWide
 
@@ -105,7 +105,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: true,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: true, startHeight: 0,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -122,10 +122,12 @@ function parseArgs(argv) {
     else if (k === '--plain') { a.tries = 1; a.refine = 0; }
     else if (k === '--ramp') { a.ramp = parseFloat(v); i++; }
     else if (k === '--no-variety') { a.variety = false; }
+    else if (k === '--start-height') { a.startHeight = parseInt(v, 10); i++; }
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
   if (!Number.isFinite(a.ramp) || a.ramp < 0) a.ramp = 0;
+  if (!Number.isFinite(a.startHeight) || a.startHeight < 0) a.startHeight = 0;
   if (!Number.isFinite(a.seed)) a.seed = Math.floor(Math.random() * 1e9);
   if (!Number.isFinite(a.pieces) || a.pieces < 4) a.pieces = 4;
   if (!Number.isFinite(a.turn)) a.turn = 0.3;
@@ -214,7 +216,19 @@ function newLayout(styles, rng) {
     return true;
   };
   // start piece at the origin, facing north
-  L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: 0, dy: 0 });
+  const startHeight0 = (styles && styles.startHeight) || 0;
+  L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: startHeight0, dy: 0 });
+  L.front = [0, -1]; L.h = N; L.y = startHeight0;
+  // optional elevated start: chain confirmed down-ramps (PlaneSlopeUp, id 33, used in
+  // reverse) right after the start, so the track begins high up and descends to ground
+  // level before the random path begins. Only uses geometry we've verified in-game.
+  const startHeight = (styles && styles.startHeight) || 0;
+  for (let i = 0; i < startHeight; i++) {
+    L.sinceRamp = 99; // this is an intentional staircase - the normal ramp-spacing rule doesn't apply here
+    const down = { id: 33, rise: -1 };
+    if (!L.tryAdd(down)) break; // stop early if it somehow can't fit (shouldn't happen in a straight line)
+  }
+  L.sinceRamp = 99; // reset so the random path after this doesn't inherit a fake "just had a ramp" state
   return L;
 }
 
@@ -303,13 +317,14 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
     cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
     straightIds: useVariety ? STRAIGHT_STYLES : [ID.STRAIGHT],
     curveIds: useVariety ? CURVE_STYLES : [ID.CURVE],
+    startHeight,
   };
   let best = null, firstScore = null;
   for (let t = 0; t < Math.max(1, tries); t++) {
@@ -444,7 +459,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight);
   const pieces = smart.pieces;
   verify(pieces);
 
