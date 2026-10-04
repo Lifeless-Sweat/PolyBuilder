@@ -21,6 +21,10 @@ on:
         description: "Seed (leave empty for a random track)"
         required: false
         default: ""
+      start_height:
+        description: "Starting elevation (0 = flat ground)"
+        required: false
+        default: "5"
 
 permissions:
   contents: write
@@ -39,7 +43,7 @@ jobs:
 
       - name: Generate the track
         run: |
-          ARGS="--pieces ${{ github.event.inputs.pieces }} --env ${{ github.event.inputs.theme }} --out track_code.txt --preview track_preview.txt"
+          ARGS="--pieces ${{ github.event.inputs.pieces }} --env ${{ github.event.inputs.theme }} --start-height ${{ github.event.inputs.start_height }} --out track_code.txt --preview track_preview.txt"
           if [ -n "${{ github.event.inputs.seed }}" ]; then ARGS="$ARGS --seed ${{ github.event.inputs.seed }}"; fi
           node polytrack_generator.js $ARGS
 
