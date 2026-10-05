@@ -224,20 +224,12 @@ function newLayout(styles, rng) {
     return true;
   };
   // start piece at the origin, facing north
-  const startHeight0 = -((styles && styles.startHeight) || 0); // start BELOW ground, climb up via confirmed ramps
-  L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: startHeight0, dy: 0 });
-  L.front = [0, -1]; L.h = N; L.y = startHeight0;
-  // Elevated start: begins BELOW ground and climbs UP to track level using the one ramp
-  // direction we've actually confirmed in-game (low side in, high side out). Climbing up
-  // gives the same "the start isn't flat ground" effect as descending would, without
-  // relying on the untested/broken "down" traversal.
+  // Elevated start: the start and the whole track simply begin at this height - no climb
+  // needed since there's no change happening yet. Random ramps later in the track (via
+  // --ramp) can still raise it further from here.
   const startHeight = (styles && styles.startHeight) || 0;
-  for (let i = 0; i < startHeight; i++) {
-    L.sinceRamp = 99; // this is an intentional staircase - the normal ramp-spacing rule doesn't apply here
-    const up = { id: 33, rise: 1 };
-    if (!L.tryAdd(up)) break; // stop early if it somehow can't fit (shouldn't happen in a straight line)
-  }
-  L.sinceRamp = 99; // reset so the random path after this doesn't inherit a fake "just had a ramp" state
+  L.place({ kind: 'start', id: startId, rotation: HEAD_ROT.get(key(N)), origin: [0, 0], cells: [[0, 0]], hIn: N, hOut: N, nextFront: [0, -1], y: startHeight, dy: 0 });
+  L.front = [0, -1]; L.h = N; L.y = startHeight;
   return L;
 }
 
@@ -444,7 +436,11 @@ function toTrackCode(pieces, args) {
   // a "down" ramp can dip below the starting height - shift everything up so the
   // lowest point sits at y=0. Without this, negative y wraps to a huge unsigned byte
   // (e.g. -1 becomes 255) and the piece renders sky-high instead of underground.
-  const minY = Math.min(...pieces.map((p) => p.y || 0));
+  // Only shift DOWN when something actually dips negative (that's the bug this guards
+  // against - a negative height wraps to a huge unsigned byte). Never shift a track that's
+  // already non-negative - that would erase an intentional elevated start with no other
+  // height variation to anchor against (exactly what happened before this fix).
+  const minY = Math.min(0, ...pieces.map((p) => p.y || 0));
   const groups = new Map();
   let maxCoord = 0;
   for (const p of pieces) {
