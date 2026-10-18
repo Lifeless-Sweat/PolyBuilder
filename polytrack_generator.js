@@ -15,9 +15,10 @@
  * Confirmed piece IDs (decoded from real exported tracks):
  *   0 = straight, 5 = start, 6 = finish, 36 = curve, 75 = checkpoint, ramps = see RAMPS below
  *
- * RAMPS: same footprint/rotation as a straight piece, but the piece after it sits `rise`
- * grid levels higher. Only id 33 (rise 1) is confirmed from a real export; the rest are
- * estimated from a screenshot and may need correcting - see the RAMPS table.
+ * RAMPS (measured from real community routes): rotation r makes a ramp rise toward
+ * north/west/south/east for r = 0/1/2/3 and its block y is the LOW end. Uphill = face the ramp
+ * along your travel direction; downhill = the same ramp turned around. Three ramps are used:
+ * PlaneSlopeUp (1 cell, +1), PlaneSlopeUpLong (2 cells, +2), PlaneSlope (1 cell, +2).
  *
  * GEOMETRY (all confirmed from real exported tracks):
  *   - The grid step is 4 units. Straight / start / finish / checkpoint fill ONE cell.
@@ -41,38 +42,45 @@ const ID = { STRAIGHT: 0, START: 5, FINISH: 6, CURVE: 36, CHECKPOINT: 75 };
 // Alternate styles for start / finish / checkpoint - all single-cell, non-connecting
 // markers with the same placement rule as the base ones above, just a different gate
 // look. Picked randomly per-track for variety.
-// Only the individually-confirmed id for each. Two real in-game breaks (Pillar/Tilted
-// straights, and most likely a non-Plane checkpoint's mounting base) came from assuming
-// same-family ids behave identically without testing each one - so these stay locked to
-// single confirmed values rather than offering unverified siblings.
-const START_STYLES = [5];        // Start
+// Each id below has real export evidence behind it now (either sandwiched between known
+// straights, confirming exact position/height, or at minimum consistent rotation/y with
+// everything else in a real export - see conversation history for specifics per batch).
+const START_STYLES = [5, 91, 92, 93];        // Start, StartWide, PlaneStart, PlaneStartWide
 // Straight-like 1-cell pieces, assumed to share Straight's connection rule (untested on the
 // exit side - this is the "add now, fix after" batch). Pillar and Tilted variants were
 // pulled out after a confirmed in-game mismatch: they likely don't share the same height
 // baseline as a plain Straight at the same y value (a Pillar piece probably sits on a
 // support column of its own, not flush with the road the way Straight does), so mixing
 // them produced a visibly disconnected block. StraightWide looked fine and stays in.
-const STRAIGHT_STYLES = [0, 10];                      // Straight, StraightWide
+// StraightPillarBottom/Short confirmed via a real sandwiched export: sit at the exact
+// same y as the straights either side at ground level. Not separately confirmed at a
+// non-zero --start-height - if a pillar piece looks offset on an elevated track, that's
+// the thing to report.
+const STRAIGHT_STYLES = [0, 10, 119, 120];            // Straight, StraightWide, StraightPillarBottom, StraightPillarShort
 // TurnLong/TurnLong2/TurnLong3 do NOT share TurnShort's exact footprint - tried reusing
 // its connection math as a guess and it produced gaps in real tracks (confirmed in-game).
 // Back to just the one confirmed curve until the TurnLong family gets a real export test.
 const CURVE_STYLES = [36];                            // TurnShort only
 const FINISH_STYLES = [6];       // Finish
-const CHECKPOINT_STYLES = [75];  // PlaneCheckpoint - the one actually seen in a real export
+// Plain "Checkpoint" (id 52) deliberately left out - wasn't in the real export batch that
+// confirmed the other three, and it's the one most suspected of the original floating-
+// mounting-base bug. Add it once it's specifically tested.
+const CHECKPOINT_STYLES = [65, 75, 77];  // CheckpointWide, PlaneCheckpoint, PlaneCheckpointWide
 
-// Ramp pieces: same 1-cell footprint and rotation rule as a straight piece, but the far
-// end sits `rise` grid levels higher (confirmed for id 33: rise 1, from a real exported
-// connection). The rest are ESTIMATED from a screenshot comparing relative heights, not
-// individually confirmed - verify in-game and adjust RAMPS below if any height is off.
+// Ramp pieces. Geometry measured from 9 real community routes (PlaneSlopeUp alone was also
+// confirmed from your own export):
+//   - rotation r makes the ramp RISE toward rot(North, r):  r0 = north, r1 = west, r2 = south, r3 = east
+//   - the block's y is its LOW end; the high end is `rise` levels above it
+//   - `len` = how many cells it covers; its block sits on the LOW-END cell
+// To go UPHILL while travelling in direction H, face the ramp along H. To go DOWNHILL,
+// face it along -H (the same piece, turned around) and put its block at the lower (exit) height.
 const RAMPS = [
-  { id: 33, rise: 1 }, // confirmed via real export: 1 cell long, rises 1 level
+  { id: 33, rise: 1, len: 1 },  // PlaneSlopeUp      - 1 cell, +1 level
+  { id: 145, rise: 2, len: 2 }, // PlaneSlopeUpLong  - 2 cells, +2 levels
+  { id: 35, rise: 2, len: 1 },  // PlaneSlope        - 1 cell, +2 levels (steeper)
 ];
-// The other 10 ramp ids (145, 35, 170, 171, 13, 14, 148, 147, 17, 18) are NOT used yet -
-// an earlier attempt guessed their height from a screenshot and produced floating/
-// disconnected track sections in-game. They're very likely longer than 1 cell too
-// (a gentler climb needs more length as well as more height), so both dimensions need
-// a real single-ramp connect test (like the one that confirmed id 33) before they're safe
-// to use. Re-enable one at a time here once confirmed, with { id, rise, cells: N }.
+// Still unused: the wide/half/left-right ramp variants (13, 14, 147, 148, 17, 18, 170, 171, ...) -
+// too few examples in the routes so far to trust their size.
 
 // directions as [dx, dz]  (north = -z, east = +x)
 const N = [0, -1], E = [1, 0], S = [0, 1], W = [-1, 0];
@@ -112,7 +120,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08,
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
@@ -131,10 +139,12 @@ function parseArgs(argv) {
     else if (k === '--no-variety') { a.variety = false; }
     else if (k === '--variety') { a.variety = true; }
     else if (k === '--start-height') { a.startHeight = parseInt(v, 10); i++; }
+    else if (k === '--jump') { a.jump = parseFloat(v); i++; }
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
   if (!Number.isFinite(a.ramp) || a.ramp < 0) a.ramp = 0;
+  if (!Number.isFinite(a.jump) || a.jump < 0) a.jump = 0;
   if (!Number.isFinite(a.startHeight) || a.startHeight < 0) a.startHeight = 0;
   if (!Number.isFinite(a.seed)) a.seed = Math.floor(Math.random() * 1e9);
   if (!Number.isFinite(a.pieces) || a.pieces < 4) a.pieces = 4;
@@ -168,9 +178,20 @@ function planStraight(front, hIn, styles, rng) {
 }
 
 function planRamp(front, hIn, y, ramp) {
+  const len = ramp.len || 1;
+  const up = ramp.rise > 0;
+  const entryY = y, exitY = y + ramp.rise;
+  // rotation = direction the ramp RISES toward. Going up: along our travel direction; going down: opposite.
+  const rotation = HEAD_ROT.get(key(up ? hIn : neg(hIn)));
+  const cells = [];
+  for (let i = 0; i < len; i++) cells.push(add(front, scale(hIn, i)));
+  const entryCell = cells[0], exitCell = cells[len - 1];
+  // the block sits on the LOW-END cell (entry cell when going up, exit cell when going down)
+  const origin = up ? entryCell : exitCell;
   return {
-    kind: 'ramp', id: ramp.id, rotation: hIn[1] !== 0 ? 0 : 1, origin: front, cells: [front],
-    nextFront: add(front, hIn), hOut: hIn, hIn, y, dy: ramp.rise, riseId: ramp.id,
+    kind: 'ramp', id: ramp.id, rotation, origin, cells, entryCell, exitCell,
+    nextFront: add(front, scale(hIn, len)), hOut: hIn, hIn,
+    y: Math.min(entryY, exitY), entryY, exitY, dy: ramp.rise, riseId: ramp.id,
   };
 }
 
@@ -199,6 +220,7 @@ function newLayout(styles, rng) {
   L.y = 0;
   L.sinceRamp = 99; // pieces since the last ramp event (up or down)
   L.sinceTurn = 99; // pieces since the last curve
+  L.sinceJump = 99;
   L.tryAdd = (choice) => {
     let p;
     if (choice === 'S') p = planStraight(L.front, L.h, L.styles, L.rng);
@@ -208,13 +230,48 @@ function newLayout(styles, rng) {
     if (p.y === undefined) p.y = L.y;
     const isRamp = p.kind === 'ramp';
     const isTurn = p.kind === 'curve';
-    // keep ramps away from each other and from turns, so a hill has flat ground on both sides
-    if (isRamp && (L.sinceRamp < 3 || L.sinceTurn < 2)) return false;
-    if (isTurn && L.sinceRamp < 2) return false;
+    // keep ramps/jumps away from each other and from turns, so a hill/gap has flat ground on both sides
+    if (isRamp && (L.sinceRamp < 3 || L.sinceTurn < 2 || L.sinceJump < 4)) return false;
+    if (isRamp && L.y + p.dy < 0) return false; // a downhill must not take the track below ground level
+    if (isTurn && (L.sinceRamp < 2 || L.sinceJump < 3)) return false;
     if (!L.fits(p.cells, L.pieces.length - 1)) return false;
+    if (L.gapPending) { p.afterGap = true; p.gapCells = L.pendingGapCells; L.gapPending = false; }
     L.place(p); L.front = p.nextFront; L.h = p.hOut; L.y = L.y + (p.dy || 0);
     L.sinceRamp = isRamp ? 0 : L.sinceRamp + 1;
     L.sinceTurn = isTurn ? 0 : L.sinceTurn + 1;
+    L.sinceJump = L.sinceJump + 1;
+    return true;
+  };
+  /**
+   * A jump: places an up-ramp (confirmed geometry), then skips `gapCells` cells of open
+   * air (no piece placed - the car is meant to fly over this gap), then the next tryAdd()
+   * call lands at the ramp's exit height, offset further out to clear the gap.
+   */
+  L.tryAddJump = (ramp, gapCells) => {
+    const beforeFront = L.front, beforeH = L.h, beforeY = L.y;
+    const beforeLen = L.pieces.length;
+    if (!L.tryAdd(ramp)) return false; // places the ramp itself, normal spacing rules apply
+    const rampPiece = L.pieces[L.pieces.length - 1];
+    // check the gap cells themselves don't collide with anything already placed
+    // the gap is the `gapCells` cells starting right after the ramp (i = 0 .. gapCells-1);
+    // the landing piece then sits on the cell after those. (An earlier version checked
+    // i = 1 .. gapCells, which skipped the first gap cell and wrongly included the landing.)
+    let blocked = false;
+    const gapList = [];
+    for (let i = 0; i < gapCells; i++) {
+      const cell = add(L.front, scale(L.h, i));
+      gapList.push(cell);
+      if (L.owner.has(key(cell))) { blocked = true; break; }
+    }
+    if (blocked) { // undo the ramp placement, this jump doesn't fit here
+      for (const c of rampPiece.cells) L.owner.delete(key(c));
+      L.pieces.length = beforeLen; L.front = beforeFront; L.h = beforeH; L.y = beforeY;
+      return false;
+    }
+    L.front = add(L.front, scale(L.h, gapCells));
+    L.gapPending = true;
+    L.pendingGapCells = gapList;
+    L.sinceJump = 0;
     return true;
   };
   L.finish = () => {
@@ -236,14 +293,23 @@ function newLayout(styles, rng) {
 /** Lay a track out from a list of choices. Returns null if it does not fit. */
 function build(choices, styles) {
   const L = newLayout(styles, mulberry32(1)); // fixed rng: style re-picks during refine stay stable per-cell
-  for (const c of choices) if (!L.tryAdd(c)) return null;
-  return L.finish() ? L.pieces : null;
+  for (const c of choices) {
+    const ok = (c && c.jump) ? L.tryAddJump(c.ramp, c.gap) : L.tryAdd(c);
+    if (!ok) return null;
+  }
+  if (!L.finish()) return null;
+  // fits() during construction only checks cells don't improperly overlap - it's looser
+  // than the full geometric port-alignment check in verify(). A jump's gap can produce an
+  // arrangement that passes the loose check but fails the strict one, so run the real
+  // check here too and reject the candidate rather than letting a bad one through.
+  try { verify(L.pieces); } catch (e) { return null; }
+  return L.pieces;
 }
 
 function isTurnToken(c) { return c === 'S' || c === 'L' || c === 'R'; }
 
 /** One random valid list of choices. */
-function randomChoices(rng, n, turnProb, rampProb, styles) {
+function randomChoices(rng, n, turnProb, rampProb, styles, jumpProb) {
   for (let attempt = 0; attempt < 30000; attempt++) {
     const L = newLayout(styles, rng);
     const choices = [];
@@ -251,22 +317,25 @@ function randomChoices(rng, n, turnProb, rampProb, styles) {
     for (let i = 0; i < n - 2 && ok; i++) {
       const turns = rng() < 0.5 ? ['L', 'R'] : ['R', 'L'];
       let order = rng() < turnProb ? [...turns, 'S'] : ['S', ...turns];
-      // Only "up" ramps are used - a real export only confirmed the piece's one physical
-      // direction (low side in, high side out). Reusing the same piece/rotation to fake a
-      // "down" traversal by just flipping our own dy sign doesn't match what the piece
-      // actually does in-game - confirmed broken (floating/disconnected piece in a real
-      // track). Going downhill would need a genuinely different, separately-tested piece
-      // (PlaneSlopeDown, id 34) or a properly reversed traversal - neither is done yet.
+      // Ramps can go uphill or downhill. Downhill = the same ramp turned around (see RAMPS above).
       if (rampProb > 0 && rng() < rampProb) {
+        const base = RAMPS[Math.floor(rng() * RAMPS.length)];
+        const up = base, down = { ...base, rise: -base.rise };
+        order = rng() < 0.5 ? [up, down, ...order] : [down, up, ...order];
+      }
+      // A jump: takes priority over everything else this step if it fits, since it's a
+      // multi-piece move (ramp + gap) that needs to happen before the normal options.
+      if (jumpProb > 0 && rng() < jumpProb) {
         const up = RAMPS[Math.floor(rng() * RAMPS.length)];
-        order = [up, ...order];
+        const gap = 1 + Math.floor(rng() * 2); // 1 or 2 cells of open air
+        if (L.tryAddJump(up, gap)) { choices.push({ jump: true, ramp: up, gap }); continue; }
       }
       ok = false;
       for (const o of order) if (L.tryAdd(o)) { choices.push(o); ok = true; break; }
     }
     if (ok && L.finish()) return choices;
   }
-  throw new Error('could not build a track - try fewer pieces, a lower --turn, or a lower --ramp value');
+  throw new Error('could not build a track - try fewer pieces, a lower --turn, --ramp, or --jump value');
 }
 
 // ---------------------------------------------------------------- the "eye": scoring a track
@@ -321,23 +390,32 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
     cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
-    straightIds: useVariety ? STRAIGHT_STYLES : [ID.STRAIGHT],
-    curveIds: useVariety ? CURVE_STYLES : [ID.CURVE],
+    straightIds: STRAIGHT_STYLES,
+    curveIds: CURVE_STYLES,
     startHeight,
   };
-  let best = null, firstScore = null;
-  for (let t = 0; t < Math.max(1, tries); t++) {
-    const choices = randomChoices(rng, n, turnProb, rampProb, styles);
+  let best = null, firstScore = null, t = 0, attempts = 0;
+  // randomChoices() only checks the loose cell-overlap rule as it builds, not the strict
+  // port-alignment check build() now also runs - so a choices array it hands back can
+  // still fail build() (most likely a jump gap landing wrong). Skip and redraw rather than
+  // let a null reach score(), but cap attempts so a truly impossible request still errors
+  // out instead of spinning forever.
+  while (t < Math.max(1, tries) && attempts < Math.max(1, tries) * 20) {
+    attempts++;
+    const choices = randomChoices(rng, n, turnProb, rampProb, styles, jumpProb);
     const pieces = build(choices, styles);
+    if (!pieces) continue;
     const s = score(pieces);
     if (t === 0) firstScore = s;
     if (!best || s > best.s) best = { choices, pieces, s };
+    t++;
   }
+  if (!best) throw new Error('could not build a valid track after many attempts - try a lower --jump value');
   let changes = 0;
   for (let i = 0; i < refine; i++) {
     const c = mutate(rng, best.choices);
@@ -372,9 +450,10 @@ function ports(p) {
   const c = scale(p.origin, CELL);
   if (p.kind !== 'curve') {
     const h = p.hIn || p.hOut;
+    const ce = scale(p.entryCell || p.origin, CELL), cx = scale(p.exitCell || p.origin, CELL);
     return {
-      entry: { at: add(c, scale(h, -2)), out: neg(h), y: p.y },
-      exit: { at: add(c, scale(h, 2)), out: h, y: p.y + (p.dy || 0) },
+      entry: { at: add(ce, scale(h, -2)), out: neg(h), y: p.entryY !== undefined ? p.entryY : p.y },
+      exit: { at: add(cx, scale(h, 2)), out: h, y: p.exitY !== undefined ? p.exitY : p.y + (p.dy || 0) },
     };
   }
   const A = { at: add(c, rot([0, 2], p.rotation)), out: rot(S, p.rotation), y: p.y };
@@ -387,6 +466,14 @@ function verify(pieces) {
   for (const p of pieces) for (const c of p.cells) { if (seen.has(key(c))) throw new Error('overlap'); seen.add(key(c)); }
   for (let i = 0; i < pieces.length - 1; i++) {
     const a = ports(pieces[i]).exit, b = ports(pieces[i + 1]).entry;
+    if (pieces[i + 1].afterGap) {
+      // intentional jump gap: the landing piece doesn't need to be flush against the
+      // takeoff ramp, but it must still face the same direction and land at the same
+      // height the ramp left you at, or the jump wouldn't be physically coherent.
+      if (!eq(a.out, neg(b.out))) throw new Error(`jump landing after piece ${i} faces the wrong way`);
+      if (a.y !== b.y) throw new Error(`jump landing after piece ${i} is at the wrong height`);
+      continue;
+    }
     if (!eq(a.at, b.at) || !eq(a.out, neg(b.out))) throw new Error(`pieces ${i} and ${i + 1} do not connect`);
     if (a.y !== b.y) throw new Error(`pieces ${i} and ${i + 1} do not line up in height`);
   }
@@ -414,7 +501,7 @@ function preview(pieces) {
     } else {
       const ch = p.kind === 'start' ? 'S' : p.kind === 'finish' ? 'F' : p.kind === 'checkpoint' ? 'C'
         : p.kind === 'ramp' ? (p.dy > 0 ? '^' : 'v') : (p.rotation === 0 ? '│' : '─');
-      at.set(key(p.origin), ch);
+      if (p.kind === 'ramp') for (const c of p.cells) at.set(key(c), ch); else at.set(key(p.origin), ch);
     }
   }
   const cells = [...at.keys()].map((k) => k.split(',').map(Number));
@@ -470,7 +557,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump);
   const pieces = smart.pieces;
   verify(pieces);
 
@@ -482,8 +569,9 @@ function main() {
   const cps = pieces.filter((p) => p.kind === 'checkpoint').length;
   const curves = pieces.filter((p) => p.kind === 'curve').length;
   const ramps = pieces.filter((p) => p.kind === 'ramp').length;
+  const jumps = pieces.filter((p) => p.afterGap).length;
   console.log(map);
-  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps) | ${cps} checkpoints | finish placed | geometry verified`);
+  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps, ${jumps} jumps) | ${cps} checkpoints | finish placed | geometry verified`);
   console.log(`quality score ${smart.score.toFixed(1)} (first random draw scored ${smart.firstScore.toFixed(1)}, ${smart.changes} improving changes kept)\n`);
   console.log('TRACK CODE:\n' + code);
 
@@ -493,4 +581,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { smartTrack, randomChoices, build, score, mulberry32 };
+module.exports = { smartTrack, randomChoices, build, score, mulberry32, verify };
