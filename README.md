@@ -29,6 +29,8 @@ Useful flags:
 | `--pieces <n>` | 30 | Roughly how many pieces long the track is |
 | `--turn <0-1>` | 0.3 | How curvy the track is (higher = more turns) |
 | `--ramp <0-1>` | 0.12 | How often hills show up |
+| `--jump <0-1>` | 0.08 | How often jumps show up (an uphill ramp, then 1-2 cells of open air, then a landing) |
+| `--start-height <n>` | 5 | Height the whole track starts at (0 = flat ground) |
 | `--env <name>` | Summer | `Summer`, `Winter`, or `Desert` |
 | `--tries <n>` | 40 | How many random drafts to generate before picking the best |
 | `--refine <n>` | 400 | How many small tweaks to try on the best draft |
@@ -70,20 +72,17 @@ them against what actually happened in-game.
   opens on, and the piece is a fixed right-turn shape — entering from its "near" face
   turns you right, entering from its "far" face turns you left. Getting this wrong
   (treating curves as 1-cell pieces) is what used to make generated tracks fall apart.
-- **Ramps** are a single cell like a straight piece, but the next piece sits one height
-  level higher (or lower, for a downhill piece). Only one ramp type (id 33) has been
-  confirmed this way; PolyTrack has at least 10 more ramp shapes/sizes that aren't wired
-  in yet (see "Known limitations" below).
+- **Ramps** rise toward the direction given by their rotation (0/1/2/3 = north/west/south/east)
+  and their block height is the *low* end. Going uphill means facing the ramp along your travel
+  direction; going downhill is the same piece turned around. Three ramps are in use:
+  `PlaneSlopeUp` (1 cell, +1 level), `PlaneSlopeUpLong` (2 cells, +2) and `PlaneSlope`
+  (1 cell, +2). Measured from 9 real community routes, where the rule matched 94% of the
+  junctions that could be checked.
 
 ## Known limitations
 
-- **Only one ramp type is used.** PolyTrack has 11 ramp pieces (see the [PolyModLoader
-  wiki's part list](https://wiki-vp.polymodloader.com/pmlapi/EditorExtras), which the
-  codec's `PART_NAMES` table mirrors) of different lengths and widths; only
-  `PlaneSlopeUp` (id 33) is confirmed and enabled in the generator. The naming makes the
-  others' shapes much clearer now ("Long" = longer piece, "Wide" = wider, "Half" = half
-  height/width) but they still need the same real-export connection test before they're
-  safe to use.
+- **Only three ramp types are used.** The wide, half and left/right ramp variants are still out,
+  because the routes don't contain enough of them to trust their size.
 - **Loops (tracks that return to their own start) aren't generated** — only point-to-point
   tracks (start → checkpoints → finish). Closing a loop needs the last piece to land back
   on the start's exact position and height, which is a harder constraint than this
@@ -91,9 +90,9 @@ them against what actually happened in-game.
 - **Checkpoint order** is numbered 0, 1, 2... in the order the track visits them; this
   matches how the pieces were placed but hasn't been separately confirmed against the
   game's own checkpoint-order rules.
-- This project only uses a handful of PolyTrack's ~190 pieces (road, turns, ramps, start/
-  finish/checkpoint). Walls, pillars, signs, intersections, and wide/plane variants are
-  all in `PART_NAMES` already but the generator doesn't place any of them yet.
+- **Road pieces beyond the confirmed set** (TurnLong family, S-turns, the other ramps,
+  intersections, wall-ride and tilted pieces, plain `Checkpoint`) are still out, because
+  each needs a real exit-side test before it can connect safely.
 
 ## Credits
 
