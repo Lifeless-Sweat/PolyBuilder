@@ -113,12 +113,3 @@ them against what actually happened in-game.
 - **Road pieces beyond the confirmed set** (TurnLong family, S-turns, the other ramps,
   intersections, wall-ride and tilted pieces, plain `Checkpoint`) are still out, because
   each needs a real exit-side test before it can connect safely.
-
-## Credits
-
-The track code container format (compression + custom base62 encoding) was reverse-engineered
-by [Ireozar](https://codeberg.org/Ireozar)'s open-source
-[`polytrack-codes`](https://docs.rs/polytrack-codes) Rust crate. The full piece ID list
-comes from the [PolyModLoader wiki](https://wiki-vp.polymodloader.com/pmlapi/EditorExtras).
-The curve/ramp connection geometry on top of both of those was worked out from scratch for
-this project by decoding real exported tracks.
