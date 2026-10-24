@@ -31,6 +31,7 @@ Useful flags:
 | `--ramp <0-1>` | 0.12 | How often hills show up |
 | `--jump <0-1>` | 0.08 | How often jumps show up (an uphill ramp, then 1-2 cells of open air, then a landing) |
 | `--start-height <n>` | 5 | Height the whole track starts at (0 = flat ground) |
+| `--style <name>` | - | A preset from the PolyTrack map-types guide: `technical`, `speedtech`, `speedfun`, `fakespeed`, `fullspeed` (see below) |
 | `--env <name>` | Summer | `Summer`, `Winter`, or `Desert` |
 | `--tries <n>` | 40 | How many random drafts to generate before picking the best |
 | `--refine <n>` | 400 | How many small tweaks to try on the best draft |
@@ -43,6 +44,25 @@ scores each one (rewarding a healthy mix of curves and straights, chicanes, and 
 that isn't right on top of the start; penalizing long boring straight stretches and
 one-direction spirals), keeps the best one, then keeps nudging it further and only keeps
 changes that improve the score.
+
+## Styles
+
+`--style` follows the Map Types Guide spectrum, from most braking/drifting/turns to least. Each style sets
+how curvy, how hilly and how jumpy the track is, and changes what the quality score rewards. Measured on
+40 tracks each (about 20 to 40 pieces):
+
+| Style | Curves per 10 pieces | Typical longest straight | Ramps / jumps per track |
+|---|---|---|---|
+| `technical` | 6.5 | 2 pieces | 0 / 0 |
+| `speedtech` | 5.0 | 3 pieces | 0.4 / 0.1 |
+| `speedfun` | 4.0 | 5 pieces | 1 / 0.3 (same as the defaults) |
+| `fakespeed` | 1.8 | 9 pieces | 3 / 1.7 |
+| `fullspeed` | 0 | 28 pieces | 5 / 4 |
+
+Notes: `--ramp`, `--jump`, `--cp-every` and `--name` replace a style's value. `--turn` only nudges the
+random drafts - the style's scoring still steers the result back toward the style. Only the tight
+`TurnShort` curve exists so far, so Full Speed is a straight run with hills and jumps until gentle curves
+are added, and Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
 
 ## Files
 
