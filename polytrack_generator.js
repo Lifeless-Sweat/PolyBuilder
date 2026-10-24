@@ -120,26 +120,37 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08, style: null, scoring: DEFAULT_SCORING,
   };
+  const given = new Set(); // flags typed on the command line - these beat a style preset
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i], v = argv[i + 1];
     if (k === '--seed') { a.seed = parseInt(v, 10); i++; }
     else if (k === '--pieces') { a.pieces = parseInt(v, 10); i++; }
-    else if (k === '--turn') { a.turn = parseFloat(v); i++; }
-    else if (k === '--cp-every') { a.cpEvery = parseInt(v, 10); i++; }
+    else if (k === '--turn') { a.turn = parseFloat(v); i++; given.add('turn'); }
+    else if (k === '--cp-every') { a.cpEvery = parseInt(v, 10); i++; given.add('cpEvery'); }
     else if (k === '--env') { a.env = v; i++; }
-    else if (k === '--name') { a.name = v; i++; }
+    else if (k === '--name') { a.name = v; i++; given.add('name'); }
     else if (k === '--out') { a.out = v; i++; }
     else if (k === '--preview') { a.preview = v; i++; }
     else if (k === '--tries') { a.tries = parseInt(v, 10); i++; }
     else if (k === '--refine') { a.refine = parseInt(v, 10); i++; }
     else if (k === '--plain') { a.tries = 1; a.refine = 0; }
-    else if (k === '--ramp') { a.ramp = parseFloat(v); i++; }
+    else if (k === '--ramp') { a.ramp = parseFloat(v); i++; given.add('ramp'); }
     else if (k === '--no-variety') { a.variety = false; }
     else if (k === '--variety') { a.variety = true; }
     else if (k === '--start-height') { a.startHeight = parseInt(v, 10); i++; }
-    else if (k === '--jump') { a.jump = parseFloat(v); i++; }
+    else if (k === '--jump') { a.jump = parseFloat(v); i++; given.add('jump'); }
+    else if (k === '--style') { a.style = v; i++; }
+  }
+  if (a.style) {
+    const key = Object.keys(STYLES).find((k) => k === styleKey(a.style));
+    if (!key) { console.error(`Unknown style "${a.style}". Choose one of: ${Object.keys(STYLES).join(', ')}`); process.exit(1); }
+    const st = STYLES[key];
+    a.style = key; a.styleLabel = st.label;
+    for (const k of ['turn', 'ramp', 'jump', 'cpEvery']) if (!given.has(k)) a[k] = st[k];
+    if (!given.has('name')) a.name = `AI ${st.label}`;
+    a.scoring = Object.assign({}, DEFAULT_SCORING, st.scoring);
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
@@ -338,33 +349,78 @@ function randomChoices(rng, n, turnProb, rampProb, styles, jumpProb) {
   throw new Error('could not build a track - try fewer pieces, a lower --turn, --ramp, or --jump value');
 }
 
+// ---------------------------------------------------------------- styles
+/**
+ * Scoring knobs. These defaults reproduce the original scoring exactly, so a track generated
+ * without --style is unchanged. A style overrides some of them.
+ */
+const DEFAULT_SCORING = {
+  runLimit: 5, runPenalty: 1.5,          // straight runs longer than runLimit are penalised
+  ratioLo: 0.25, ratioHi: 0.5,           // wanted share of curves among road pieces
+  loWeight: 40, hiWeight: 20,            // penalty per unit below ratioLo / above ratioHi
+  balanceSlack: 2, balanceWeight: 4,     // allowed |right turns - left turns| before penalising
+  altCap: 8, same3Weight: 3,             // reward for left/right alternation (capped); penalty for 3 same turns in a row
+  rampReward: 0, rampCap: 0,             // reward per ramp (up to rampCap)
+  jumpReward: 0, jumpCap: 0,             // reward per jump (up to jumpCap)
+};
+
+/**
+ * Presets for the PolyTrack "Map Types Guide" spectrum (most turns/braking -> least).
+ * Only the tight TurnShort curve is available so far, so:
+ *   - Technical / Speed Tech use lots of those tight turns.
+ *   - Fake Speed has just a few (each would need braking in practice).
+ *   - Full Speed has none: long straights, hills and jumps, until gentle curves are added.
+ * "Inversions" (Speed Tech) need wall-ride/loop pieces, which the generator doesn't use yet.
+ * --ramp, --jump, --cp-every and --name given on the command line replace the preset's value.
+ * --turn only changes how curvy the first random drafts are: the style's scoring still picks the drafts
+ * that fit the style, so --turn nudges the result rather than overriding it.
+ */
+const STYLES = {
+  technical: { label: 'Technical', turn: 0.62, ramp: 0.04, jump: 0.0, cpEvery: 4,
+    scoring: { runLimit: 2, runPenalty: 2.0, ratioLo: 0.6, ratioHi: 0.9, loWeight: 50, hiWeight: 15, balanceSlack: 4, balanceWeight: 2, altCap: 12, same3Weight: 0.5 } },
+  speedtech: { label: 'Speed Tech', turn: 0.47, ramp: 0.10, jump: 0.04, cpEvery: 5,
+    scoring: { runLimit: 4, ratioLo: 0.42, ratioHi: 0.68, balanceSlack: 3, balanceWeight: 3, altCap: 10, same3Weight: 2, rampReward: 0.5, rampCap: 4 } },
+  speedfun: { label: 'Speed Fun', turn: 0.3, ramp: 0.12, jump: 0.08, cpEvery: 6, scoring: {} },
+  fakespeed: { label: 'Fake Speed', turn: 0.12, ramp: 0.20, jump: 0.12, cpEvery: 8,
+    scoring: { runLimit: 9, runPenalty: 1.0, ratioLo: 0.08, ratioHi: 0.22, loWeight: 30, hiWeight: 40, altCap: 4, rampReward: 1, rampCap: 6, jumpReward: 1.5, jumpCap: 3 } },
+  fullspeed: { label: 'Full Speed', turn: 0.0, ramp: 0.25, jump: 0.15, cpEvery: 8,
+    scoring: { runLimit: 999, ratioLo: 0, ratioHi: 0, loWeight: 0, hiWeight: 80, altCap: 0, same3Weight: 0, rampReward: 1, rampCap: 8, jumpReward: 2, jumpCap: 4 } },
+};
+const styleKey = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
+
 // ---------------------------------------------------------------- the "eye": scoring a track
-/** Higher is better: interesting, varied, no long dull stretches, no endless spirals. */
-function score(pieces) {
+/** Higher is better. What "better" means depends on the scoring config (see STYLES). */
+function score(pieces, cfg) {
+  cfg = cfg || DEFAULT_SCORING;
   const road = pieces.slice(1, -1);
   let s = 0;
 
-  // long straight stretches are boring
+  // long straight stretches are boring (how long is "long" depends on the style)
   let run = 0;
-  const flush = () => { if (run > 5) s -= 1.5 * Math.pow(run - 5, 1.5); run = 0; };
+  const flush = () => { if (run > cfg.runLimit) s -= cfg.runPenalty * Math.pow(run - cfg.runLimit, 1.5); run = 0; };
   for (const p of road) { if (p.kind === 'curve') flush(); else run++; }
   flush();
 
-  // a healthy share of the road should be curves
+  // the share of the road that is curves should land in the wanted range
   const curves = road.filter((p) => p.kind === 'curve');
   const ratio = curves.length / Math.max(1, road.length);
-  s -= 40 * Math.max(0, 0.25 - ratio) + 20 * Math.max(0, ratio - 0.5);
+  s -= cfg.loWeight * Math.max(0, cfg.ratioLo - ratio) + cfg.hiWeight * Math.max(0, ratio - cfg.ratioHi);
 
   // balance left and right so the track does not just circle
   const signs = curves.map((p) => p.side);
   const nR = signs.filter((x) => x === 'R').length, nL = signs.length - nR;
-  s -= 4 * Math.max(0, Math.abs(nR - nL) - 2);
+  s -= cfg.balanceWeight * Math.max(0, Math.abs(nR - nL) - cfg.balanceSlack);
 
   // reward chicanes (left-right-left), punish three same turns in a row
   let alt = 0, same3 = 0;
   for (let i = 1; i < signs.length; i++) if (signs[i] !== signs[i - 1]) alt++;
   for (let i = 2; i < signs.length; i++) if (signs[i] === signs[i - 1] && signs[i] === signs[i - 2]) same3++;
-  s += Math.min(alt, 8) - 3 * same3;
+  s += Math.min(alt, cfg.altCap) - cfg.same3Weight * same3;
+
+  // hills and jumps can be rewarded too (used by the fast styles)
+  const nRamps = road.filter((p) => p.kind === 'ramp').length;
+  const nJumps = road.filter((p) => p.afterGap).length;
+  s += cfg.rampReward * Math.min(nRamps, cfg.rampCap) + cfg.jumpReward * Math.min(nJumps, cfg.jumpCap);
 
   // finish should not be right next to the start
   const a = pieces[0].origin, b = pieces[pieces.length - 1].origin;
@@ -390,7 +446,7 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb, scoringCfg) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
@@ -410,7 +466,7 @@ function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, start
     const choices = randomChoices(rng, n, turnProb, rampProb, styles, jumpProb);
     const pieces = build(choices, styles);
     if (!pieces) continue;
-    const s = score(pieces);
+    const s = score(pieces, scoringCfg);
     if (t === 0) firstScore = s;
     if (!best || s > best.s) best = { choices, pieces, s };
     t++;
@@ -421,7 +477,7 @@ function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, start
     const c = mutate(rng, best.choices);
     const p = build(c, styles);
     if (!p) continue;
-    const s = score(p);
+    const s = score(p, scoringCfg);
     if (s > best.s) { best = { choices: c, pieces: p, s }; changes++; }
   }
   addCheckpoints(best.pieces, build.cpEvery || 6, styles.cpId);
@@ -557,7 +613,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump, args.scoring);
   const pieces = smart.pieces;
   verify(pieces);
 
@@ -570,8 +626,10 @@ function main() {
   const curves = pieces.filter((p) => p.kind === 'curve').length;
   const ramps = pieces.filter((p) => p.kind === 'ramp').length;
   const jumps = pieces.filter((p) => p.afterGap).length;
+  let longestRun = 0, curRun = 0;
+  for (const p of pieces.slice(1, -1)) { if (p.kind === 'curve') curRun = 0; else longestRun = Math.max(longestRun, ++curRun); }
   console.log(map);
-  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps, ${jumps} jumps) | ${cps} checkpoints | finish placed | geometry verified`);
+  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps, ${jumps} jumps) | ${cps} checkpoints | longest straight run ${longestRun}${args.styleLabel ? ' | style ' + args.styleLabel : ''} | finish placed | geometry verified`);
   console.log(`quality score ${smart.score.toFixed(1)} (first random draw scored ${smart.firstScore.toFixed(1)}, ${smart.changes} improving changes kept)\n`);
   console.log('TRACK CODE:\n' + code);
 
@@ -581,4 +639,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { smartTrack, randomChoices, build, score, mulberry32, verify };
+module.exports = { smartTrack, randomChoices, build, score, mulberry32, verify, STYLES, DEFAULT_SCORING };
