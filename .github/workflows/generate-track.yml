@@ -25,6 +25,18 @@ on:
         description: "Starting elevation (0 = flat ground)"
         required: false
         default: "5"
+      style:
+        description: "Map type (default = Speed Fun-like mix)"
+        required: false
+        default: "default"
+        type: choice
+        options:
+          - default
+          - technical
+          - speedtech
+          - speedfun
+          - fakespeed
+          - fullspeed
 
 permissions:
   contents: write
@@ -45,6 +57,7 @@ jobs:
         run: |
           ARGS="--pieces ${{ github.event.inputs.pieces }} --env ${{ github.event.inputs.theme }} --start-height ${{ github.event.inputs.start_height }} --out track_code.txt --preview track_preview.txt"
           if [ -n "${{ github.event.inputs.seed }}" ]; then ARGS="$ARGS --seed ${{ github.event.inputs.seed }}"; fi
+          if [ "${{ github.event.inputs.style }}" != "default" ]; then ARGS="$ARGS --style ${{ github.event.inputs.style }}"; fi
           node polytrack_generator.js $ARGS
 
       - name: Show the code on the run page
@@ -53,7 +66,7 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat track_code.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '### Layout (S = start, C = checkpoint, F = finish)' >> $GITHUB_STEP_SUMMARY
+          echo '### Layout (S = start, C = checkpoint, F = finish, ^ uphill, v downhill)' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat track_preview.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
