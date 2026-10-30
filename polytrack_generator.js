@@ -29,6 +29,9 @@
  *   - Rotation picks which two sides a curve opens on:
  *       rot 0: south + east   rot 1: east + north   rot 2: north + west   rot 3: west + south
  *     Entering through the near face is a RIGHT turn, through the far face a LEFT turn.
+ *   - Bigger turns (the TurnLong family) follow the same pattern with radius (k + 0.5) cells: a
+ *     (k + 1) x (k + 1) block with the exit one cell past the far face, at (k + 1, -k). Fitted from a few
+ *     real routes; NOT confirmed in-game (see CURVE_K).
  */
 
 const fs = require('fs');
@@ -97,15 +100,20 @@ function rot(v, r) { let [x, z] = v; for (let i = 0; i < r; i++) [x, z] = [z, -x
 // rotation for direction-aware pieces (start / finish / checkpoint), by travel heading
 const HEAD_ROT = new Map([[key(N), 0], [key(W), 1], [key(S), 2], [key(E), 3]]);
 
-// curve at rotation 0, in cells relative to its block coordinate
-const CURVE_CELLS = [[0, 0], [1, 0], [0, -1], [1, -1]]; // the 2x2 block
-const CURVE_FAR = [1, -1];                              // cell holding the far face
-// road path through the block (for the preview): cell + the two sides the road opens on
-const CURVE_ROAD = [
-  { c: [0, 0], f: [S, N] },
-  { c: [0, -1], f: [S, E] },
-  { c: [1, -1], f: [W, E] },
-];
+// Turns are quarter circles of radius (k + 0.5) cells, k = 1..4. A turn covers a (k+1) x (k+1) block of cells,
+// described here at rotation 0 and relative to its block cell. TurnShort is k = 1 (confirmed). TurnLong,
+// TurnLong2, TurnLong3 are k = 2, 3, 4 - that is a PATTERN fitted to a handful of real-route examples
+// (exit neighbour at (k+1, -k)), NOT yet confirmed in-game.
+const CURVE_K = { 36: 1, 37: 2, 82: 3, 83: 4 };
+function curveGeometry(k) {
+  const cells = [];
+  for (let j = 0; j <= k; j++) for (let i = 0; i <= k; i++) cells.push([i, -j]); // same order as the old 2x2 list when k = 1
+  const road = []; // the road path through the block (preview only): cell + the two sides the road opens on
+  for (let j = 0; j < k; j++) road.push({ c: [0, -j], f: [S, N] });
+  road.push({ c: [0, -k], f: [S, E] });
+  for (let i = 1; i <= k; i++) road.push({ c: [i, -k], f: [W, E] });
+  return { cells, far: [k, -k], road };
+}
 
 // ---------------------------------------------------------------- RNG + args
 function mulberry32(seed) {
@@ -120,7 +128,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08, style: null, scoring: DEFAULT_SCORING,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08, style: null, scoring: DEFAULT_SCORING, curveIds: null,
   };
   const given = new Set(); // flags typed on the command line - these beat a style preset
   for (let i = 2; i < argv.length; i++) {
@@ -151,6 +159,7 @@ function parseArgs(argv) {
     for (const k of ['turn', 'ramp', 'jump', 'cpEvery']) if (!given.has(k)) a[k] = st[k];
     if (!given.has('name')) a.name = `AI ${st.label}`;
     a.scoring = Object.assign({}, DEFAULT_SCORING, st.scoring);
+    if (st.curves) a.curveIds = st.curves;
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
@@ -168,16 +177,18 @@ function parseArgs(argv) {
 /** Work out a curve for a turn: which rotation, where its block sits, where we are afterwards. */
 function planTurn(front, hIn, side, styles, rng) {
   const curveId = (styles && styles.curveIds && rng) ? styles.curveIds[Math.floor(rng() * styles.curveIds.length)] : ID.CURVE;
+  const k = CURVE_K[curveId] || 1;
+  const geo = curveGeometry(k);
   const hOut = side === 'R' ? turnRight(hIn) : turnLeft(hIn);
   for (let r = 0; r < 4; r++) {
     const nearFace = rot(S, r), farFace = rot(E, r);
     let origin = null;
     if (side === 'R' && eq(nearFace, neg(hIn)) && eq(farFace, hOut)) origin = front;      // enter by the near face
-    if (side === 'L' && eq(farFace, neg(hIn)) && eq(nearFace, hOut)) origin = add(front, neg(rot(CURVE_FAR, r))); // enter by the far face
+    if (side === 'L' && eq(farFace, neg(hIn)) && eq(nearFace, hOut)) origin = add(front, neg(rot(geo.far, r))); // enter by the far face
     if (origin) {
-      const cells = CURVE_CELLS.map((c) => add(origin, rot(c, r)));
-      const nextFront = add(add(front, hIn), scale(hOut, 2));
-      return { kind: 'curve', id: curveId, rotation: r, origin, cells, nextFront, hOut, hIn, side, entryFace: side === 'R' ? 'A' : 'B', dy: 0 };
+      const cells = geo.cells.map((c) => add(origin, rot(c, r)));
+      const nextFront = add(add(front, scale(hIn, k)), scale(hOut, k + 1));
+      return { kind: 'curve', id: curveId, k, rotation: r, origin, cells, nextFront, hOut, hIn, side, entryFace: side === 'R' ? 'A' : 'B', dy: 0 };
     }
   }
   throw new Error('no curve rotation found');
@@ -369,11 +380,12 @@ const DEFAULT_SCORING = {
  * Presets for the PolyTrack "Map Types Guide" spectrum (most turns/braking -> least).
  * Only the tight TurnShort curve is available so far, so:
  *   - Technical / Speed Tech use lots of those tight turns.
- *   - Fake Speed has just a few, and they may come close together (those need braking).
- *   - Full Speed is meant to be drivable holding the accelerator the whole way: a few ISOLATED turns
- *     with at least 4 straight pieces between them (no chicanes or hairpins), plus hills and jumps.
- *     Whether the tight TurnShort itself can be taken without braking is untested; the gentler
- *     TurnLong curves would make this style properly 'full speed' once they are added.
+ *   - Fake Speed has just a few, and they may come close together (each one needs drifting or braking).
+ *   - Full Speed must be drivable holding the accelerator the whole way. A TurnShort can't be (confirmed
+ *     in-game: it forces a drift), so it uses only the gentle TurnLong3 curve - a few of them, at least
+ *     3 straight pieces apart, plus hills and jumps. TurnLong3's geometry is a fitted pattern backed by
+ *     one real-route example and NOT yet confirmed in-game; only this style uses it. (TurnLong and
+ *     TurnLong2 are modelled too - see CURVE_K - but no style uses them until they are confirmed.)
  * "Inversions" (Speed Tech) need wall-ride/loop pieces, which the generator doesn't use yet.
  * --ramp, --jump, --cp-every and --name given on the command line replace the preset's value.
  * --turn only changes how curvy the first random drafts are: the style's scoring still picks the drafts
@@ -387,9 +399,9 @@ const STYLES = {
   speedfun: { label: 'Speed Fun', turn: 0.3, ramp: 0.12, jump: 0.08, cpEvery: 6, scoring: {} },
   fakespeed: { label: 'Fake Speed', turn: 0.12, ramp: 0.20, jump: 0.12, cpEvery: 8,
     scoring: { runLimit: 9, runPenalty: 1.0, ratioLo: 0.08, ratioHi: 0.22, loWeight: 30, hiWeight: 40, altCap: 4, rampReward: 1, rampCap: 6, jumpReward: 1.5, jumpCap: 3 } },
-  fullspeed: { label: 'Full Speed', turn: 0.10, ramp: 0.25, jump: 0.15, cpEvery: 8,
-    scoring: { runLimit: 999, ratioLo: 0.07, ratioHi: 0.14, loWeight: 200, hiWeight: 60, balanceSlack: 3, altCap: 0, same3Weight: 3,
-      curveGapMin: 4, curveGapWeight: 6, rampReward: 1, rampCap: 8, jumpReward: 2, jumpCap: 4 } },
+  fullspeed: { label: 'Full Speed', turn: 0.12, ramp: 0.25, jump: 0.15, cpEvery: 8, curves: [83],
+    scoring: { runLimit: 999, ratioLo: 0.08, ratioHi: 0.2, loWeight: 200, hiWeight: 60, balanceSlack: 3, altCap: 0, same3Weight: 3,
+      curveGapMin: 3, curveGapWeight: 6, rampReward: 1, rampCap: 8, jumpReward: 2, jumpCap: 4 } },
 };
 const styleKey = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
 
@@ -459,13 +471,13 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb, scoringCfg) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb, scoringCfg, curveIds) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
     cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
     straightIds: STRAIGHT_STYLES,
-    curveIds: CURVE_STYLES,
+    curveIds: curveIds || CURVE_STYLES,
     startHeight,
   };
   let best = null, firstScore = null, t = 0, attempts = 0;
@@ -526,7 +538,8 @@ function ports(p) {
     };
   }
   const A = { at: add(c, rot([0, 2], p.rotation)), out: rot(S, p.rotation), y: p.y };
-  const B = { at: add(c, rot([6, -4], p.rotation)), out: rot(E, p.rotation), y: p.y };
+  const kk = p.k || 1;
+  const B = { at: add(c, rot([4 * kk + 2, -4 * kk], p.rotation)), out: rot(E, p.rotation), y: p.y };
   return p.entryFace === 'A' ? { entry: A, exit: B } : { entry: B, exit: A };
 }
 
@@ -563,7 +576,7 @@ function preview(pieces) {
   const at = new Map();
   for (const p of pieces) {
     if (p.kind === 'curve') {
-      for (const seg of CURVE_ROAD) {
+      for (const seg of curveGeometry(p.k || 1).road) {
         const c = add(p.origin, rot(seg.c, p.rotation));
         at.set(key(c), faceChar(seg.f.map((d) => rot(d, p.rotation))));
       }
@@ -626,7 +639,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump, args.scoring);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump, args.scoring, args.curveIds);
   const pieces = smart.pieces;
   verify(pieces);
 
@@ -639,12 +652,13 @@ function main() {
   const curves = pieces.filter((p) => p.kind === 'curve').length;
   const ramps = pieces.filter((p) => p.kind === 'ramp').length;
   const jumps = pieces.filter((p) => p.afterGap).length;
+  const turnsL = pieces.filter((p) => p.kind === 'curve' && p.side === 'L').length, turnsR = pieces.filter((p) => p.kind === 'curve' && p.side === 'R').length;
   let minGap = null, gapRun = null;
   for (const p of pieces.slice(1, -1)) { if (p.kind === 'curve') { if (gapRun !== null) minGap = minGap === null ? gapRun : Math.min(minGap, gapRun); gapRun = 0; } else if (gapRun !== null) gapRun++; }
   let longestRun = 0, curRun = 0;
   for (const p of pieces.slice(1, -1)) { if (p.kind === 'curve') curRun = 0; else longestRun = Math.max(longestRun, ++curRun); }
   console.log(map);
-  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps, ${jumps} jumps) | ${cps} checkpoints | longest straight run ${longestRun}${minGap !== null ? ' | closest curves ' + minGap + ' apart' : ''}${args.styleLabel ? ' | style ' + args.styleLabel : ''} | finish placed | geometry verified`);
+  console.log(`\nseed ${args.seed} | ${pieces.length} pieces (${curves} curves, ${ramps} ramps, ${jumps} jumps) | ${cps} checkpoints | ${turnsL} left / ${turnsR} right turns | longest straight run ${longestRun}${minGap !== null ? ' | closest curves ' + minGap + ' apart' : ''}${args.styleLabel ? ' | style ' + args.styleLabel : ''} | finish placed | geometry verified`);
   console.log(`quality score ${smart.score.toFixed(1)} (first random draw scored ${smart.firstScore.toFixed(1)}, ${smart.changes} improving changes kept)\n`);
   console.log('TRACK CODE:\n' + code);
 
