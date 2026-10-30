@@ -57,16 +57,16 @@ how curvy, how hilly and how jumpy the track is, and changes what the quality sc
 | `speedtech` | 5.0 | 3 pieces | 0.4 / 0.1 |
 | `speedfun` | 4.0 | 5 pieces | 1 / 0.3 (same as the defaults) |
 | `fakespeed` | 1.8 | 9 pieces | 3 / 1.7 |
-| `fullspeed` | 0.8 | 13 pieces | 4.4 / 2.6 |
+| `fullspeed` | 0.8 | 13 pieces | 4 / 2.6 |
 
 Notes: `--ramp`, `--jump`, `--cp-every` and `--name` replace a style's value. `--turn` only nudges the
 random drafts - the style's scoring still steers the result back toward the style.
 
-`fullspeed` means you could hold the accelerator the whole way: every track has 1 to 3 turns, always
-at least 4 straight pieces apart (no chicanes, hairpins or back-to-back turns), with hills and jumps on
-the straights. The only turn piece so far is the tight `TurnShort`, and whether it can really be taken
-without braking is untested - the gentler `TurnLong` curves would make this style properly full speed
-once they are added. Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
+`fullspeed` means you can hold the accelerator the whole way. A `TurnShort` forces a drift (confirmed
+in-game), so this style uses only the gentle `TurnLong3` curve: 2 to 4 of them per track, always at least
+3 pieces apart, plus hills and jumps. `TurnLong3`'s geometry is a pattern fitted to one real-route example
+and has **not** been confirmed in-game yet - if its turns don't connect, tell us. `fakespeed` is the style
+with a few drift/brake turns, and Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
 
 ## Files
 
@@ -117,3 +117,12 @@ them against what actually happened in-game.
 - **Road pieces beyond the confirmed set** (TurnLong family, S-turns, the other ramps,
   intersections, wall-ride and tilted pieces, plain `Checkpoint`) are still out, because
   each needs a real exit-side test before it can connect safely.
+
+## Credits
+
+The track code container format (compression + custom base62 encoding) was reverse-engineered
+by [Ireozar](https://codeberg.org/Ireozar)'s open-source
+[`polytrack-codes`](https://docs.rs/polytrack-codes) Rust crate. The full piece ID list
+comes from the [PolyModLoader wiki](https://wiki-vp.polymodloader.com/pmlapi/EditorExtras).
+The curve/ramp connection geometry on top of both of those was worked out from scratch for
+this project by decoding real exported tracks.
