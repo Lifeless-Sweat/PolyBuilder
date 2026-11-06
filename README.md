@@ -62,12 +62,6 @@ how curvy, how hilly and how jumpy the track is, and changes what the quality sc
 Notes: `--ramp`, `--jump`, `--cp-every` and `--name` replace a style's value. `--turn` only nudges the
 random drafts - the style's scoring still steers the result back toward the style.
 
-`fullspeed` means you can hold the accelerator the whole way. A `TurnShort` forces a drift (confirmed
-in-game), so this style uses only the gentle `TurnLong3` curve: 2 to 4 of them per track, always at least
-3 pieces apart, plus hills and jumps. `TurnLong3`'s geometry is a pattern fitted to one real-route example
-and has **not** been confirmed in-game yet - if its turns don't connect, tell us. `fakespeed` is the style
-with a few drift/brake turns, and Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
-
 ## Files
 
 - **`polytrack_generator.js`** — the generator. Builds a random self-avoiding path from
