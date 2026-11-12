@@ -128,7 +128,7 @@ function mulberry32(seed) {
 function parseArgs(argv) {
   const a = {
     seed: Math.floor(Math.random() * 1e9), pieces: 30, turn: 0.3,
-    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08, style: null, scoring: DEFAULT_SCORING, curveIds: null,
+    cpEvery: 6, env: 'Summer', name: 'AI Track', out: null, preview: null, tries: 40, refine: 400, ramp: 0.12, variety: false, startHeight: 5, jump: 0.08, style: null, scoring: DEFAULT_SCORING, curveIds: null, straightIds: null,
   };
   const given = new Set(); // flags typed on the command line - these beat a style preset
   for (let i = 2; i < argv.length; i++) {
@@ -141,9 +141,9 @@ function parseArgs(argv) {
     else if (k === '--name') { a.name = v; i++; given.add('name'); }
     else if (k === '--out') { a.out = v; i++; }
     else if (k === '--preview') { a.preview = v; i++; }
-    else if (k === '--tries') { a.tries = parseInt(v, 10); i++; }
-    else if (k === '--refine') { a.refine = parseInt(v, 10); i++; }
-    else if (k === '--plain') { a.tries = 1; a.refine = 0; }
+    else if (k === '--tries') { a.tries = parseInt(v, 10); i++; given.add('tries'); }
+    else if (k === '--refine') { a.refine = parseInt(v, 10); i++; given.add('refine'); }
+    else if (k === '--plain') { a.tries = 1; a.refine = 0; given.add('tries'); given.add('refine'); }
     else if (k === '--ramp') { a.ramp = parseFloat(v); i++; given.add('ramp'); }
     else if (k === '--no-variety') { a.variety = false; }
     else if (k === '--variety') { a.variety = true; }
@@ -159,7 +159,10 @@ function parseArgs(argv) {
     for (const k of ['turn', 'ramp', 'jump', 'cpEvery']) if (!given.has(k)) a[k] = st[k];
     if (!given.has('name')) a.name = `AI ${st.label}`;
     a.scoring = Object.assign({}, DEFAULT_SCORING, st.scoring);
+    if (st.tries && !given.has('tries')) a.tries = st.tries;
+    if (st.refine && !given.has('refine')) a.refine = st.refine;
     if (st.curves) a.curveIds = st.curves;
+    if (st.straights) a.straightIds = st.straights;
   }
   if (!Number.isFinite(a.tries) || a.tries < 1) a.tries = 1;
   if (!Number.isFinite(a.refine) || a.refine < 0) a.refine = 0;
@@ -374,6 +377,9 @@ const DEFAULT_SCORING = {
   rampReward: 0, rampCap: 0,             // reward per ramp (up to rampCap)
   jumpReward: 0, jumpCap: 0,             // reward per jump (up to jumpCap)
   curveGapMin: 0, curveGapWeight: 0,     // wanted straight pieces between two curves (back-to-back turns force braking)
+  curveTarget: null, curveTargetWeight: 0, // wanted exact number of curves (null = no target)
+  firstCurveMax: null, firstCurveWeight: 0, // the first curve should sit at piece index <= firstCurveMax (null = no limit)
+  downBeforeCurveWeight: 0,              // penalty per downhill ramp placed before the first curve (downhill adds speed)
 };
 
 /**
@@ -382,10 +388,12 @@ const DEFAULT_SCORING = {
  *   - Technical / Speed Tech use lots of those tight turns.
  *   - Fake Speed has just a few, and they may come close together (each one needs drifting or braking).
  *   - Full Speed must be drivable holding the accelerator the whole way. A TurnShort can't be (confirmed
- *     in-game: it forces a drift), so it uses only the gentle TurnLong3 curve - a few of them, at least
- *     3 straight pieces apart, plus hills and jumps. TurnLong3's geometry is a fitted pattern backed by
- *     one real-route example and NOT yet confirmed in-game; only this style uses it. (TurnLong and
- *     TurnLong2 are modelled too - see CURVE_K - but no style uses them until they are confirmed.)
+ *     in-game: it forces a drift). In a real test, ONE gentle TurnLong3 turn taken early (about 5 straight
+ *     pieces after the start) was fine at full speed, while a second one a few pieces later was not. So this
+ *     style has exactly one TurnLong3 turn, placed early, and otherwise plain straights, hills and jumps.
+ *     TurnLong3's geometry is a fitted pattern (one real-route example) - only this style uses it.
+ *     No downhill before the turn (it would add speed going into it).
+ *     No jumps: an untested jump (and one right after the start, with no speed) could force braking or a crash.
  * "Inversions" (Speed Tech) need wall-ride/loop pieces, which the generator doesn't use yet.
  * --ramp, --jump, --cp-every and --name given on the command line replace the preset's value.
  * --turn only changes how curvy the first random drafts are: the style's scoring still picks the drafts
@@ -399,9 +407,10 @@ const STYLES = {
   speedfun: { label: 'Speed Fun', turn: 0.3, ramp: 0.12, jump: 0.08, cpEvery: 6, scoring: {} },
   fakespeed: { label: 'Fake Speed', turn: 0.12, ramp: 0.20, jump: 0.12, cpEvery: 8,
     scoring: { runLimit: 9, runPenalty: 1.0, ratioLo: 0.08, ratioHi: 0.22, loWeight: 30, hiWeight: 40, altCap: 4, rampReward: 1, rampCap: 6, jumpReward: 1.5, jumpCap: 3 } },
-  fullspeed: { label: 'Full Speed', turn: 0.12, ramp: 0.25, jump: 0.15, cpEvery: 8, curves: [83],
-    scoring: { runLimit: 999, ratioLo: 0.08, ratioHi: 0.2, loWeight: 200, hiWeight: 60, balanceSlack: 3, altCap: 0, same3Weight: 3,
-      curveGapMin: 3, curveGapWeight: 6, rampReward: 1, rampCap: 8, jumpReward: 2, jumpCap: 4 } },
+  fullspeed: { label: 'Full Speed', turn: 0.12, ramp: 0.25, jump: 0, cpEvery: 8, curves: [83], straights: [0], tries: 80, refine: 800,
+    scoring: { runLimit: 999, ratioLo: 0, ratioHi: 1, loWeight: 0, hiWeight: 0, altCap: 0, same3Weight: 0,
+      curveTarget: 1, curveTargetWeight: 100, firstCurveMax: 6, firstCurveWeight: 40, downBeforeCurveWeight: 60,
+      rampReward: 1, rampCap: 8, jumpReward: 0, jumpCap: 0 } },
 };
 const styleKey = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
 
@@ -442,6 +451,21 @@ function score(pieces, cfg) {
   }
   s -= cfg.curveGapWeight * gapDeficit;
 
+  // an exact number of curves, and/or the first one early (the car is still slow near the start)
+  if (cfg.curveTarget !== null) s -= cfg.curveTargetWeight * Math.abs(curves.length - cfg.curveTarget);
+  if (cfg.firstCurveMax !== null && curves.length) {
+    const firstIdx = pieces.findIndex((p) => p.kind === 'curve');
+    if (firstIdx > cfg.firstCurveMax) s -= cfg.firstCurveWeight * (firstIdx - cfg.firstCurveMax);
+  }
+
+  // downhill before the first turn adds speed going into it
+  if (cfg.downBeforeCurveWeight) {
+    const firstIdx = pieces.findIndex((p) => p.kind === 'curve');
+    const limit = firstIdx === -1 ? pieces.length : firstIdx;
+    const downs = pieces.slice(0, limit).filter((p) => p.kind === 'ramp' && p.dy < 0).length;
+    s -= cfg.downBeforeCurveWeight * downs;
+  }
+
   // hills and jumps can be rewarded too (used by the fast styles)
   const nRamps = road.filter((p) => p.kind === 'ramp').length;
   const nJumps = road.filter((p) => p.afterGap).length;
@@ -454,13 +478,16 @@ function score(pieces, cfg) {
 }
 
 /** Change 1-3 random choices. */
-function mutate(rng, choices) {
+function mutate(rng, choices, hillsToo) {
   const c = choices.slice();
-  const idx = c.map((x, i) => i).filter((i) => isTurnToken(c[i]));
+  // hillsToo (only styles with a curve-count target): the search may also drop a ramp/jump, because the
+  // spacing rule keeps turns away from hills and a hill can leave no legal spot for a wanted early turn
+  const idx = c.map((x, i) => i).filter((i) => isTurnToken(c[i]) || (hillsToo && c[i] && typeof c[i] === 'object'));
   if (idx.length === 0) return c;
   const k = Math.min(idx.length, 1 + Math.floor(rng() * 3));
   for (let i = 0; i < k; i++) {
     const j = idx[Math.floor(rng() * idx.length)];
+    if (typeof c[j] === 'object') { c[j] = 'S'; continue; }
     const opts = ['S', 'L', 'R'].filter((x) => x !== c[j]);
     c[j] = opts[Math.floor(rng() * 2)];
   }
@@ -471,12 +498,12 @@ function mutate(rng, choices) {
  * Draw `tries` random tracks and keep the best, then keep tweaking it:
  * every change that makes the track score higher is kept, the rest are thrown away.
  */
-function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb, scoringCfg, curveIds) {
+function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, startHeight, jumpProb, scoringCfg, curveIds, straightIds) {
   const styles = {
     startId: START_STYLES[Math.floor(rng() * START_STYLES.length)],
     finishId: FINISH_STYLES[Math.floor(rng() * FINISH_STYLES.length)],
     cpId: CHECKPOINT_STYLES[Math.floor(rng() * CHECKPOINT_STYLES.length)],
-    straightIds: STRAIGHT_STYLES,
+    straightIds: straightIds || STRAIGHT_STYLES,
     curveIds: curveIds || CURVE_STYLES,
     startHeight,
   };
@@ -499,7 +526,7 @@ function smartTrack(rng, n, turnProb, tries, refine, rampProb, useVariety, start
   if (!best) throw new Error('could not build a valid track after many attempts - try a lower --jump value');
   let changes = 0;
   for (let i = 0; i < refine; i++) {
-    const c = mutate(rng, best.choices);
+    const c = mutate(rng, best.choices, !!(scoringCfg && scoringCfg.curveTarget !== null));
     const p = build(c, styles);
     if (!p) continue;
     const s = score(p, scoringCfg);
@@ -639,7 +666,7 @@ function main() {
   const rng = mulberry32(args.seed);
   smartTrack.cpEvery = args.cpEvery; // read by smartTrack's internal addCheckpoints call
   build.cpEvery = args.cpEvery;
-  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump, args.scoring, args.curveIds);
+  const smart = smartTrack(rng, args.pieces, args.turn, args.tries, args.refine, args.ramp, args.variety, args.startHeight, args.jump, args.scoring, args.curveIds, args.straightIds);
   const pieces = smart.pieces;
   verify(pieces);
 
