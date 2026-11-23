@@ -57,20 +57,20 @@ how curvy, how hilly and how jumpy the track is, and changes what the quality sc
 | `speedtech` | 5.0 | 3 pieces | 0.4 / 0.1 |
 | `speedfun` | 4.0 | 5 pieces | 1 / 0.3 (same as the defaults) |
 | `fakespeed` | 1.8 | 9 pieces | 3 / 1.7 |
-| `fullspeed` | 0 (+ 1.5 S-bends) | no 90° turns | 3.8 / 0 |
+| `fullspeed` | 0 (+ 1.5 S-bends) | no 90° turns | 0 / 0 |
 
 Notes: `--ramp`, `--jump`, `--cp-every` and `--name` replace a style's value. `--turn` only nudges the
 random drafts - the style's scoring still steers the result back toward the style.
 
-`fullspeed` means you can hold the accelerator the whole way. No 90° turn works for that: a `TurnShort`
-forces a drift, and a second `TurnLong3` a few pieces after the first was also too fast in a real test. Five
-real Full Speed tracks (hundreds of slope and plane pieces each) all use **S-turns** - the road keeps its
-heading and slides one cell sideways over 3 or 4 cells - so this style is straight road with S-bends (about
-one every 6 pieces) and hills, with no 90° turns and no jumps. The S-turn geometry was measured on those
-real tracks (the next piece sits 1 cell sideways and 3 or 4 forward, at the same height) but has **not** been
-confirmed in-game yet. The real Full Speed tracks are also wide-road, plane-and-slope constructions
-that this one-lane generator can't reproduce. `fakespeed` is the style with a few drift/brake turns, and
-Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
+`fullspeed` means you can hold the accelerator the whole way, so it is as simple as possible: **flat straight
+road with S-bends only** - no ramps (a ramp makes you brake), no jumps, no 90° turns. A 90° turn doesn't work
+for it: a `TurnShort` forces a drift, and a second `TurnLong3` a few pieces after the first was also too fast
+in a real test. Five real Full Speed tracks all use **S-turns** - the road keeps its heading and slides one cell
+sideways over 3 or 4 cells - so about one S-bend every 6 pieces is used here. The S-turn geometry was measured
+on those real tracks (the next piece sits 1 cell sideways and 3 or 4 forward, at the same height) but has
+**not** been confirmed in-game yet. The real Full Speed tracks are also wide-road, plane-and-slope
+constructions that this one-lane generator can't reproduce. `fakespeed` is the style with a few drift/brake
+turns, and Speed Tech's "inversions" need wall-ride pieces the generator doesn't use yet.
 
 ## Files
 
