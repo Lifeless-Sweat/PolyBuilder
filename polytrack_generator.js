@@ -414,8 +414,8 @@ const DEFAULT_SCORING = {
  *   - Full Speed must be drivable holding the accelerator the whole way. No 90-degree turn works (a TurnShort
  *     forces a drift; a second TurnLong3 a few pieces after the first was also too fast in a real test). The real
  *     Full Speed tracks (5 examples) use S-TURNS in every one: the road keeps its heading and slides one cell
- *     sideways, a slight turn. So this style is straight road with S-turns (about one per 6 pieces) and hills,
- *     no 90-degree turns and no jumps. The S-turn geometry is measured from real tracks but not yet confirmed in-game.
+ *     sideways, a slight turn. So this style is FLAT straight road with S-turns (about one per 6 pieces): no
+ *     90-degree turns, no jumps and no ramps (a ramp makes you brake). The S-turn geometry is measured from real tracks but not yet confirmed in-game.
  * "Inversions" (Speed Tech) need wall-ride/loop pieces, which the generator doesn't use yet.
  * --ramp, --jump, --cp-every and --name given on the command line replace the preset's value.
  * --turn only changes how curvy the first random drafts are: the style's scoring still picks the drafts
@@ -429,9 +429,9 @@ const STYLES = {
   speedfun: { label: 'Speed Fun', turn: 0.3, ramp: 0.12, jump: 0.08, cpEvery: 6, scoring: {} },
   fakespeed: { label: 'Fake Speed', turn: 0.12, ramp: 0.20, jump: 0.12, cpEvery: 8,
     scoring: { runLimit: 9, runPenalty: 1.0, ratioLo: 0.08, ratioHi: 0.22, loWeight: 30, hiWeight: 40, altCap: 4, rampReward: 1, rampCap: 6, jumpReward: 1.5, jumpCap: 3 } },
-  fullspeed: { label: 'Full Speed', turn: 0.3, ramp: 0.2, jump: 0, cpEvery: 8, straights: [0], bends: true, tries: 80, refine: 800,
+  fullspeed: { label: 'Full Speed', turn: 0.3, ramp: 0, jump: 0, cpEvery: 8, straights: [0], bends: true, tries: 80, refine: 800,
     scoring: { runLimit: 999, ratioLo: 0, ratioHi: 1, loWeight: 0, hiWeight: 0, altCap: 0, same3Weight: 0, balanceWeight: 0,
-      bendsPerPiece: 0.15, bendWeight: 12, bendBalanceWeight: 2, rampReward: 1, rampCap: 8, jumpReward: 0, jumpCap: 0 } },
+      bendsPerPiece: 0.15, bendWeight: 12, bendBalanceWeight: 2, rampReward: 0, rampCap: 0, jumpReward: 0, jumpCap: 0 } },
 };
 const styleKey = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
 
